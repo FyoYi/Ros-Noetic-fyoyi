@@ -1,0 +1,16 @@
+build/
+devel/
+install/
+log/
+
+.catkin_tools/
+.vscode/
+.idea/
+
+__pycache__/
+*.pyc
+
+*.bag
+*.log
+*.zip
+*.tar.gz
