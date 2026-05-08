@@ -1,0 +1,11 @@
+robot_radius: $(arg robot_radius)
+inflation_radius: $(arg inflation_radius)
+obstacle_range: $(arg obstacle_range)
+raytrace_range: $(arg raytrace_range)
+observation_sources: base_lidar
+base_lidar: {
+    data_type: LaserScan,
+    topic: $(arg scan_topic), 
+    marking: true, 
+    clearing: true
+    }

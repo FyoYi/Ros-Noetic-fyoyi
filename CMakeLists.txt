@@ -2,19 +2,26 @@ cmake_minimum_required(VERSION 3.0.2)
 project(ros_fyoyi)
 
 ## Compile as C++11, supported in ROS Kinetic and newer
-# add_compile_options(-std=c++11)
+add_compile_options(-std=c++11)
 
 ## Find catkin macros and libraries
 ## if COMPONENTS list like find_package(catkin REQUIRED COMPONENTS xyz)
 ## is used, also find other catkin packages
 find_package(catkin REQUIRED COMPONENTS
+  actionlib
+  geometry_msgs
+  interactive_markers
+  move_base_msgs
   roscpp
-  rospy
+  roslib
   std_msgs
+  std_srvs
+  visualization_msgs
 )
 
 ## System dependencies are found with CMake's conventions
 # find_package(Boost REQUIRED COMPONENTS system)
+find_package(yaml-cpp REQUIRED)
 
 
 ## Uncomment this if the package has a setup.py. This macro ensures
@@ -105,7 +112,7 @@ find_package(catkin REQUIRED COMPONENTS
 catkin_package(
 #  INCLUDE_DIRS include
 #  LIBRARIES ros_fyoyi
-#  CATKIN_DEPENDS roscpp rospy std_msgs
+  CATKIN_DEPENDS actionlib geometry_msgs interactive_markers move_base_msgs roscpp roslib std_msgs std_srvs visualization_msgs
 #  DEPENDS system_lib
 )
 
@@ -150,6 +157,23 @@ include_directories(
 #   ${catkin_LIBRARIES}
 # )
 
+add_executable(waypoint_server
+  src/waypoint_server.cpp
+)
+add_dependencies(waypoint_server ${${PROJECT_NAME}_EXPORTED_TARGETS} ${catkin_EXPORTED_TARGETS})
+target_link_libraries(waypoint_server
+  ${catkin_LIBRARIES}
+  yaml-cpp
+)
+
+add_executable(waypoint_cli
+  src/waypoint_cli.cpp
+)
+add_dependencies(waypoint_cli ${${PROJECT_NAME}_EXPORTED_TARGETS} ${catkin_EXPORTED_TARGETS})
+target_link_libraries(waypoint_cli
+  ${catkin_LIBRARIES}
+)
+
 #############
 ## Install ##
 #############
@@ -163,6 +187,9 @@ include_directories(
 #   scripts/my_python_script
 #   DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
 # )
+install(TARGETS waypoint_server waypoint_cli
+  RUNTIME DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
+)
 
 ## Mark executables for installation
 ## See http://docs.ros.org/melodic/api/catkin/html/howto/format1/building_executables.html
@@ -185,12 +212,9 @@ include_directories(
 #   PATTERN ".svn" EXCLUDE
 # )
 
-## Mark other files for installation (e.g. launch and bag files, etc.)
-# install(FILES
-#   # myfile1
-#   # myfile2
-#   DESTINATION ${CATKIN_PACKAGE_SHARE_DESTINATION}
-# )
+install(DIRECTORY launch config maps rviz
+  DESTINATION ${CATKIN_PACKAGE_SHARE_DESTINATION}
+)
 
 #############
 ## Testing ##

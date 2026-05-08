@@ -1,0 +1,231 @@
+<launch>
+    <!--
+      ros_fyoyi 是“导航包”，不是“机器人 bringup 包”。
+
+      启动这个 launch 之前，外部机器人或仿真系统需要已经准备好：
+        1. 激光雷达话题，例如 /scan，消息类型 sensor_msgs/LaserScan
+        2. 里程计话题，例如 /odom，消息类型 nav_msgs/Odometry
+        3. TF 坐标树，例如 odom -> base_footprint -> laser
+        4. 底盘控制器订阅 /cmd_vel，消息类型 geometry_msgs/Twist
+
+      本 launch 做的事情：
+        1. map_server 加载已有地图
+        2. amcl 根据地图和雷达做定位
+        3. move_base 做全局规划和局部避障
+        4. 可选启动 RViz
+        5. 默认启动 ros_fyoyi 自带航点工具
+        6. 可选启动 WaterPlus 航点工具
+    -->
+
+    <!--
+      地图和 RViz 配置。
+      map_file 指向 map_server 要加载的 .yaml 文件。
+      rviz_config 指向 RViz 的显示布局文件。
+      换地图时，优先在命令行覆盖 map_file，而不是直接改 launch。
+      示例：
+        roslaunch ros_fyoyi waypoint_nav.launch map_file:=/home/user/maps/lab.yaml
+    -->
+    <arg name="map_file" default="$(find ros_fyoyi)/maps/home/map.yaml"/>
+    <arg name="rviz_config" default="$(find ros_fyoyi)/rviz/Local_plan.rviz"/>
+    <arg name="waypoints_file" default="$(find ros_fyoyi)/config/waypoints.yaml"/>
+
+    <!--
+      坐标系配置。
+      map_frame 通常是 map，由 map_server/amcl 使用。
+      odom_frame 通常是 odom，由机器人里程计系统使用。
+      base_frame 是机器人底盘坐标系，常见值是 base_footprint 或 base_link。
+
+      如果你的机器人没有 base_footprint，而是 base_link：
+        roslaunch ros_fyoyi waypoint_nav.launch base_frame:=base_link
+    -->
+    <arg name="map_frame" default="map"/>
+    <arg name="odom_frame" default="odom"/>
+    <arg name="base_frame" default="base_footprint"/>
+
+    <!--
+      话题配置。
+      scan_topic 是激光雷达 LaserScan 话题，AMCL 和 costmap 都会用到。
+      odom_topic 是 TEB 局部规划器读取的里程计话题。
+
+      注意：
+        odom_frame 是 TF 坐标系名字。
+        odom_topic 是 ROS 话题名字。
+      这两个概念不要混淆。
+    -->
+    <arg name="scan_topic" default="/scan"/>
+    <arg name="odom_topic" default="odom"/>
+
+    <!--
+      机器人尺寸和障碍物配置。
+      robot_radius 用于 costmap，表示机器人在代价地图里的圆形半径。
+      teb_footprint_radius 用于 TEB，表示局部规划器计算碰撞时使用的机器人半径。
+      inflation_radius 是障碍物膨胀距离，越大越保守，机器人越不贴墙。
+      obstacle_range 表示多远以内的雷达障碍物会被标记进 costmap。
+      raytrace_range 表示多远以内的雷达空闲区域会用于清除障碍物。
+    -->
+    <arg name="robot_radius" default="0.25"/>
+    <arg name="teb_footprint_radius" default="0.17"/>
+    <arg name="inflation_radius" default="0.5"/>
+    <arg name="obstacle_range" default="1.0"/>
+    <arg name="raytrace_range" default="6.0"/>
+
+    <!--
+      规划器配置。
+      global_planner 是全局规划器，负责在地图上生成从当前位置到目标点的全局路径。
+      local_planner 是局部规划器，负责避障和生成 /cmd_vel。
+      controller_frequency 是 move_base 控制循环频率，单位 Hz。
+    -->
+    <arg name="global_planner" default="global_planner/GlobalPlanner"/>
+    <arg name="local_planner" default="teb_local_planner/TebLocalPlannerROS"/>
+    <arg name="controller_frequency" default="10.0"/>
+
+    <!--
+      可选功能开关。
+      use_rviz=false 时不启动 RViz，适合远程机器人或无显示环境。
+      use_fyoyi_waypoints=true 时启动本包自带航点工具。
+      use_waterplus=false 时不启动 WaterPlus 航点工具。
+
+      一般建议：
+        初学和本包独立使用：use_fyoyi_waypoints:=true use_waterplus:=false
+        兼容 WaterPlus 老教程：use_fyoyi_waypoints:=false use_waterplus:=true
+    -->
+    <arg name="use_rviz" default="true"/>
+    <arg name="use_fyoyi_waypoints" default="true"/>
+    <arg name="use_waterplus" default="false"/>
+    <arg name="enable_clicked_point" default="false"/>
+    <arg name="auto_save_waypoints" default="true"/>
+
+    <!--
+      保存本次选择的关键配置，方便调试。
+      启动后可以运行：
+        rosparam get /ros_fyoyi
+      查看当前实际使用的地图、话题和坐标系。
+    -->
+    <rosparam subst_value="true" ns="ros_fyoyi">
+        map_file: "$(arg map_file)"
+        rviz_config: "$(arg rviz_config)"
+        waypoints_file: "$(arg waypoints_file)"
+        map_frame: "$(arg map_frame)"
+        odom_frame: "$(arg odom_frame)"
+        base_frame: "$(arg base_frame)"
+        scan_topic: "$(arg scan_topic)"
+        odom_topic: "$(arg odom_topic)"
+        robot_radius: "$(arg robot_radius)"
+    </rosparam>
+
+    <!--
+      启动 map_server。
+      它读取 map_file 指向的地图 yaml，并发布：
+        /map
+        /map_metadata
+      这个节点只加载已有地图，不负责建图。
+    -->
+    <node pkg="map_server" type="map_server" name="map_server" args="$(arg map_file)"/>
+
+    <!--
+      启动 AMCL。
+      AMCL 用 /map、/scan、/odom 和 TF 来估计机器人在地图中的位置。
+      它会发布 map -> odom 的 TF。
+
+      remap from="scan" to="$(arg scan_topic)" 的作用：
+        AMCL 默认订阅 scan，这里把它重映射到用户指定的雷达话题。
+    -->
+    <node pkg="amcl" type="amcl" name="amcl" output="screen">
+        <param name="global_frame_id" value="$(arg map_frame)"/>
+        <param name="odom_frame_id" value="$(arg odom_frame)"/>
+        <param name="base_frame_id" value="$(arg base_frame)"/>
+        <remap from="scan" to="$(arg scan_topic)"/>
+    </node>
+
+    <!--
+      启动 move_base。
+      move_base 负责：
+        1. 接收 RViz 的 /move_base_simple/goal
+        2. 使用全局规划器生成全局路径
+        3. 使用局部规划器避障
+        4. 发布 /cmd_vel 给底盘
+
+      这里加载四类参数：
+        costmap_common_params.yaml       全局/局部 costmap 共用参数
+        global_costmap_params.yaml       全局 costmap 参数
+        local_costmap_params.yaml        局部 costmap 参数
+        teb_local_planner_params.yaml    TEB 局部规划器参数
+
+      subst_value="true" 的作用：
+        允许 yaml 文件里使用 $(arg scan_topic)、$(arg base_frame) 这类 launch 参数。
+    -->
+    <node pkg="move_base" type="move_base" name="move_base">
+        <rosparam file="$(find ros_fyoyi)/config/costmap_common_params.yaml" command="load" ns="global_costmap" subst_value="true"/>
+        <rosparam file="$(find ros_fyoyi)/config/costmap_common_params.yaml" command="load" ns="local_costmap" subst_value="true"/>
+        <rosparam file="$(find ros_fyoyi)/config/global_costmap_params.yaml" command="load" subst_value="true"/>
+        <rosparam file="$(find ros_fyoyi)/config/local_costmap_params.yaml" command="load" subst_value="true"/>
+        <param name="base_global_planner" value="$(arg global_planner)"/>
+        <param name="base_local_planner" value="$(arg local_planner)"/>
+        <rosparam file="$(find ros_fyoyi)/config/teb_local_planner_params.yaml" command="load" subst_value="true"/>
+        <param name="controller_frequency" value="$(arg controller_frequency)" type="double"/>
+    </node>
+
+    <!--
+      可选启动 RViz。
+      RViz 只是显示和交互工具，不参与底层控制。
+      RViz 中：
+        2D Pose Estimate 用于给 AMCL 设置初始位姿
+        2D Nav Goal 用于给 move_base 发送导航目标
+    -->
+    <node if="$(arg use_rviz)" name="rviz" pkg="rviz" type="rviz" args="-d $(arg rviz_config)"/>
+
+    <!--
+      ros_fyoyi 自带航点工具。
+
+      它提供类似 WaterPlus 的基础能力：
+        1. 从 yaml 加载航点
+        2. 接收 RViz 标点并生成航点
+        3. 在 RViz 发布航点 Marker
+        4. 保存航点到 yaml
+        5. 按航点名字发送 move_base 导航目标
+
+      常用接口：
+        添加航点：
+          /fyoyi/add_waypoint       geometry_msgs/PoseStamped
+        自定义下一个航点名：
+          /fyoyi/next_waypoint_name std_msgs/String
+        重命名航点：
+          /fyoyi/rename_waypoint    std_msgs/String，格式：旧名字 新名字
+        按名字导航：
+          /fyoyi/navi_waypoint      std_msgs/String
+        删除航点：
+          /fyoyi/delete_waypoint    std_msgs/String
+        查看导航结果：
+          /fyoyi/navi_result        std_msgs/String
+        保存航点：
+          rosservice call /fyoyi/save_waypoints "{}"
+        列出航点：
+          rosservice call /fyoyi/list_waypoints "{}"
+
+      RViz 标航点方法：
+        使用 topic 为 /fyoyi/add_waypoint 的 2D Nav Goal 工具。
+        不要和 /move_base_simple/goal 混淆，后者是直接导航。
+
+      RViz 删除航点方法：
+        在 Displays 中打开 Fyoyi Editable Waypoints。
+        右键点击对应航点，选择“删除这个航点”。
+    -->
+    <node if="$(arg use_fyoyi_waypoints)" pkg="ros_fyoyi" type="waypoint_server" name="waypoint_server" output="screen">
+        <param name="waypoints_file" value="$(arg waypoints_file)"/>
+        <param name="map_frame" value="$(arg map_frame)"/>
+        <param name="enable_clicked_point" value="$(arg enable_clicked_point)"/>
+        <param name="auto_save" value="$(arg auto_save_waypoints)"/>
+    </node>
+
+    <!--
+      可选启动 WaterPlus 航点工具。
+      wp_navi_server 和 wp_manager 用于航点管理/按航点导航。
+      如果只想使用 RViz 的 2D Nav Goal，可以设置：
+        use_waterplus:=false
+    -->
+    <group if="$(arg use_waterplus)">
+        <node pkg="waterplus_map_tools" type="wp_navi_server" name="wp_navi_server" output="screen"/>
+        <node pkg="waterplus_map_tools" type="wp_manager" name="wp_manager" output="screen"/>
+    </group>
+
+</launch>

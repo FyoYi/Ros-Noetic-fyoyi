@@ -1,0 +1,45 @@
+waypoints:
+  - name: room
+    frame_id: map
+    position:
+      x: -4.056748867034912
+      y: 2.410346984863281
+      z: 0
+    orientation:
+      x: 0
+      y: 0
+      z: -0.6049959514199789
+      w: 0.7962285468164493
+  - name: ketin
+    frame_id: map
+    position:
+      x: 3.97065544128418
+      y: 2.977612257003784
+      z: 0
+    orientation:
+      x: 0
+      y: 0
+      z: -0.6403650619044273
+      w: 0.7680706917283975
+  - name: fangjian
+    frame_id: map
+    position:
+      x: -4.040815353393555
+      y: -3.263082027435303
+      z: 0
+    orientation:
+      x: 0
+      y: 0
+      z: 0.7046981508966207
+      w: 0.7095072347220173
+  - name: aaa
+    frame_id: map
+    position:
+      x: -2.042471408843994
+      y: 2.725687980651855
+      z: 0
+    orientation:
+      x: 0
+      y: 0
+      z: -0.4284651324384326
+      w: 0.9035583159290363

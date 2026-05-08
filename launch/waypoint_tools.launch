@@ -1,0 +1,61 @@
+<launch>
+    <!--
+      ros_fyoyi 自带航点工具。
+
+      这个 launch 只启动航点节点和可选 RViz，不启动 map_server、amcl、move_base。
+      如果你已经用别的 launch 启动了导航系统，可以单独运行它。
+
+      如果你想一次性启动导航和航点功能，推荐直接运行：
+        roslaunch ros_fyoyi waypoint_nav.launch
+    -->
+
+    <!-- 航点保存文件。默认保存在本包 config/waypoints.yaml，方便学习时直接查看和提交。 -->
+    <arg name="waypoints_file" default="$(find ros_fyoyi)/config/waypoints.yaml"/>
+
+    <!-- RViz 配置文件。这里已经添加了 /fyoyi/waypoints_marker 的 MarkerArray 显示。 -->
+    <arg name="rviz_config" default="$(find ros_fyoyi)/rviz/Local_plan.rviz"/>
+
+    <!-- 航点所在坐标系。导航地图环境下通常使用 map。 -->
+    <arg name="map_frame" default="map"/>
+
+    <!-- 是否启动 RViz。没有图形界面时可以设置 use_rviz:=false。 -->
+    <arg name="use_rviz" default="true"/>
+
+    <!--
+      是否允许 RViz 的 Publish Point 直接添加航点。
+      false：推荐默认值，需要用 /fyoyi/add_waypoint 添加完整位姿。
+      true：点击 Publish Point 就会添加航点，但只有位置，朝向使用 default_yaw。
+    -->
+    <arg name="enable_clicked_point" default="false"/>
+    <arg name="default_yaw" default="0.0"/>
+    <arg name="auto_save" default="true"/>
+
+    <!--
+      航点服务节点。
+      主要接口：
+        /fyoyi/add_waypoint       geometry_msgs/PoseStamped，添加航点
+        /fyoyi/navi_waypoint      std_msgs/String，按名字导航
+        /fyoyi/navi_result        std_msgs/String，导航结果
+        /fyoyi/next_waypoint_name std_msgs/String，设置下一个航点名
+        /fyoyi/rename_waypoint    std_msgs/String，重命名航点，格式：旧名字 新名字
+        /fyoyi/delete_waypoint    std_msgs/String，删除航点
+        /fyoyi/save_waypoints     std_srvs/Trigger，保存航点
+        /fyoyi/reload_waypoints   std_srvs/Trigger，重新加载航点
+        /fyoyi/list_waypoints     std_srvs/Trigger，列出航点
+        /fyoyi/waypoints_marker   visualization_msgs/MarkerArray，RViz 显示
+        /fyoyi/waypoints_interactive/update  RViz 交互标记，可右键删除
+    -->
+    <node pkg="ros_fyoyi" type="waypoint_server" name="waypoint_server" output="screen">
+        <param name="waypoints_file" value="$(arg waypoints_file)"/>
+        <param name="map_frame" value="$(arg map_frame)"/>
+        <param name="enable_clicked_point" value="$(arg enable_clicked_point)"/>
+        <param name="default_yaw" value="$(arg default_yaw)"/>
+        <param name="auto_save" value="$(arg auto_save)"/>
+    </node>
+
+    <!--
+      RViz 只是显示和标点工具。
+      标航点时，使用工具栏里 topic 为 /fyoyi/add_waypoint 的 2D Nav Goal。
+    -->
+    <node if="$(arg use_rviz)" name="rviz" pkg="rviz" type="rviz" args="-d $(arg rviz_config)"/>
+</launch>
