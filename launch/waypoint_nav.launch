@@ -193,6 +193,12 @@
           /fyoyi/rename_waypoint    std_msgs/String，格式：旧名字 新名字
         按名字导航：
           /fyoyi/navi_waypoint      std_msgs/String
+        队列导航或循环巡逻：
+          /fyoyi/patrol_waypoints   std_msgs/String，格式：航点1 航点2；循环时前面加 loop 参数
+        取消、暂停、继续：
+          /fyoyi/cancel_navigation  std_msgs/String
+          /fyoyi/pause_patrol       std_msgs/String
+          /fyoyi/resume_patrol      std_msgs/String
         删除航点：
           /fyoyi/delete_waypoint    std_msgs/String
         查看导航结果：
@@ -201,6 +207,8 @@
           rosservice call /fyoyi/save_waypoints "{}"
         列出航点：
           rosservice call /fyoyi/list_waypoints "{}"
+        查看当前状态：
+          rosservice call /fyoyi/status "{}"
 
       RViz 标航点方法：
         使用 topic 为 /fyoyi/add_waypoint 的 2D Nav Goal 工具。

@@ -443,6 +443,104 @@ rosrun ros_fyoyi waypoint_cli nav not_exist
 可用航点：wp_1, room
 ```
 
+### 队列导航和循环巡逻
+
+队列导航就是一次给多个航点，小车会按顺序导航。
+
+例如依次去 `room`、`ketin`、`fangjian`：
+
+```bash
+rosrun ros_fyoyi waypoint_cli patrol room ketin fangjian
+```
+
+如果想一直循环巡逻，在航点前面加 `--loop`：
+
+```bash
+rosrun ros_fyoyi waypoint_cli patrol --loop room ketin fangjian
+```
+
+也可以直接发布话题：
+
+```bash
+rostopic pub /fyoyi/patrol_waypoints std_msgs/String "data: 'room ketin fangjian'" -1
+rostopic pub /fyoyi/patrol_waypoints std_msgs/String "data: '--loop room ketin fangjian'" -1
+```
+
+注意：
+
+```text
+队列里的每个航点都必须已经存在。
+如果某个航点不存在，waypoint_cli 会先报错，不会发送巡逻任务。
+```
+
+### 取消、暂停和继续
+
+取消当前导航或巡逻：
+
+```bash
+rosrun ros_fyoyi waypoint_cli cancel
+```
+
+暂停巡逻：
+
+```bash
+rosrun ros_fyoyi waypoint_cli pause
+```
+
+继续巡逻：
+
+```bash
+rosrun ros_fyoyi waypoint_cli resume
+```
+
+暂停时会取消当前 `move_base` 目标。继续后，会从当前航点重新发送导航目标。
+
+### 查看当前状态
+
+查看 waypoint_server 当前在做什么：
+
+```bash
+rosrun ros_fyoyi waypoint_cli status
+```
+
+输出类似：
+
+```text
+当前状态：循环巡逻
+当前目标：room
+巡逻队列：[room] -> ketin -> fangjian
+循环巡逻：是
+上次结果：任务已启动
+```
+
+也可以直接调用服务：
+
+```bash
+rosservice call /fyoyi/status "{}"
+```
+
+### 实时查看状态和导航日志
+
+如果希望像日志窗口一样持续查看小车当前状态，运行：
+
+```bash
+rosrun ros_fyoyi waypoint_cli watch
+```
+
+默认每 1 秒刷新一次状态，同时监听 `/fyoyi/navi_result`，有导航完成、失败、暂停、取消等结果时会立即打印。
+
+也可以指定刷新间隔，例如每 0.5 秒刷新一次：
+
+```bash
+rosrun ros_fyoyi waypoint_cli watch 0.5
+```
+
+退出实时查看：
+
+```text
+Ctrl+C
+```
+
 ### 删除航点
 
 方式一：在 RViz 里删除。
@@ -520,6 +618,12 @@ ros_fyoyi 航点工具
   rosrun ros_fyoyi waypoint_cli reload
   rosrun ros_fyoyi waypoint_cli clear
   rosrun ros_fyoyi waypoint_cli nav <waypoint_name>
+  rosrun ros_fyoyi waypoint_cli patrol [--loop] <waypoint_1> <waypoint_2> ...
+  rosrun ros_fyoyi waypoint_cli cancel
+  rosrun ros_fyoyi waypoint_cli pause
+  rosrun ros_fyoyi waypoint_cli resume
+  rosrun ros_fyoyi waypoint_cli status
+  rosrun ros_fyoyi waypoint_cli watch [刷新秒数]
   rosrun ros_fyoyi waypoint_cli delete <waypoint_name>
   rosrun ros_fyoyi waypoint_cli rename <old_name> <new_name>
   rosrun ros_fyoyi waypoint_cli name <next_waypoint_name>

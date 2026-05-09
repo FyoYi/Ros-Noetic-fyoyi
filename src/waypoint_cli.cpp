@@ -18,19 +18,61 @@ void printUsage()
 
 用法:
   rosrun ros_fyoyi waypoint_cli help
+      显示本帮助信息。
+
   rosrun ros_fyoyi waypoint_cli list
+      查看当前保存的所有航点，包含 x、y、yaw 角度和坐标系。
+
   rosrun ros_fyoyi waypoint_cli save
+      手动保存航点到 yaml 文件。默认已自动保存，这条命令用于确认写入。
+
   rosrun ros_fyoyi waypoint_cli reload
+      从 yaml 文件重新加载航点。手动修改 waypoints.yaml 后使用。
+
   rosrun ros_fyoyi waypoint_cli clear
+      清空当前航点列表，并按当前配置自动保存。这个操作会删除已加载航点。
+
   rosrun ros_fyoyi waypoint_cli nav <waypoint_name>
+      导航到指定航点。发送前会检查航点是否存在。
+
+  rosrun ros_fyoyi waypoint_cli patrol <waypoint_1> <waypoint_2> ...
+      队列导航，按顺序依次前往多个航点。
+
+  rosrun ros_fyoyi waypoint_cli patrol --loop <waypoint_1> <waypoint_2> ...
+      循环巡逻，按顺序到达最后一个航点后，再从第一个航点重新开始。
+
+  rosrun ros_fyoyi waypoint_cli cancel
+      取消当前导航、队列导航或循环巡逻。
+
+  rosrun ros_fyoyi waypoint_cli pause
+      暂停当前巡逻任务。暂停时会取消当前 move_base 目标。
+
+  rosrun ros_fyoyi waypoint_cli resume
+      继续暂停中的巡逻任务。继续后会从当前航点重新发送导航目标。
+
+  rosrun ros_fyoyi waypoint_cli status
+      查看当前状态，例如空闲、单点导航、队列导航、循环巡逻、暂停。
+
+  rosrun ros_fyoyi waypoint_cli watch [刷新秒数]
+      实时查看状态和导航结果日志。默认每 1 秒刷新一次，按 Ctrl+C 退出。
+
   rosrun ros_fyoyi waypoint_cli delete <waypoint_name>
+      删除指定航点。发送前会检查航点是否存在。
+
   rosrun ros_fyoyi waypoint_cli rename <old_name> <new_name>
+      重命名航点。旧名字必须存在，新名字不能重复。
+
   rosrun ros_fyoyi waypoint_cli name <next_waypoint_name>
+      设置下一个通过 RViz 添加的航点名字。只对下一次添加生效。
 
 示例:
   rosrun ros_fyoyi waypoint_cli list
   rosrun ros_fyoyi waypoint_cli name room
   rosrun ros_fyoyi waypoint_cli nav room
+  rosrun ros_fyoyi waypoint_cli patrol room ketin fangjian
+  rosrun ros_fyoyi waypoint_cli patrol --loop room ketin fangjian
+  rosrun ros_fyoyi waypoint_cli watch
+  rosrun ros_fyoyi waypoint_cli cancel
   rosrun ros_fyoyi waypoint_cli rename wp_1 door
   rosrun ros_fyoyi waypoint_cli delete door
   rosrun ros_fyoyi waypoint_cli save
@@ -168,6 +210,20 @@ bool requireWaypointMissing(const std::set<std::string>& names, const std::strin
   return false;
 }
 
+std::string joinWords(const std::vector<std::string>& words, std::size_t begin_index)
+{
+  std::ostringstream output;
+  for (std::size_t i = begin_index; i < words.size(); ++i)
+  {
+    if (i > begin_index)
+    {
+      output << " ";
+    }
+    output << words[i];
+  }
+  return output.str();
+}
+
 bool publishOnce(ros::NodeHandle& nh, const std::string& topic, const std::string& text)
 {
   ros::Publisher pub = nh.advertise<std_msgs::String>(topic, 1);
@@ -192,6 +248,50 @@ bool publishOnce(ros::NodeHandle& nh, const std::string& topic, const std::strin
   return true;
 }
 
+void navResultCallback(const std_msgs::String::ConstPtr& msg)
+{
+  std::cout << "\n[导航结果] " << msg->data << std::endl;
+}
+
+bool parsePositiveDouble(const std::string& text, double& value)
+{
+  std::istringstream input(text);
+  input >> value;
+  return !input.fail() && input.eof() && value > 0.0;
+}
+
+int watchStatus(ros::NodeHandle& nh, double period_seconds)
+{
+  if (!ros::service::waitForService("/fyoyi/status", ros::Duration(5.0)))
+  {
+    std::cerr << "错误：服务不可用，请先启动 waypoint_server：/fyoyi/status" << std::endl;
+    return 1;
+  }
+
+  ros::ServiceClient status_client = nh.serviceClient<std_srvs::Trigger>("/fyoyi/status");
+  ros::Subscriber result_sub = nh.subscribe("/fyoyi/navi_result", 20, navResultCallback);
+  ros::WallRate rate(1.0 / period_seconds);
+
+  std::cout << "开始实时查看小车状态，按 Ctrl+C 退出。" << std::endl;
+  while (ros::ok())
+  {
+    std_srvs::Trigger srv;
+    if (status_client.call(srv) && srv.response.success)
+    {
+      std::cout << "\n========== 小车状态 ==========\n" << srv.response.message
+                << "\n==============================" << std::endl;
+    }
+    else
+    {
+      std::cerr << "错误：读取状态失败。" << std::endl;
+    }
+
+    ros::spinOnce();
+    rate.sleep();
+  }
+  return 0;
+}
+
 }  // namespace
 
 int main(int argc, char** argv)
@@ -208,7 +308,7 @@ int main(int argc, char** argv)
     return 0;
   }
 
-  ros::init(argc, argv, "waypoint_cli");
+  ros::init(argc, argv, "waypoint_cli", ros::init_options::AnonymousName);
   ros::NodeHandle nh;
 
   const std::string& command = args[0];
@@ -228,6 +328,20 @@ int main(int argc, char** argv)
   {
     return callTrigger("/fyoyi/clear_waypoints") ? 0 : 1;
   }
+  if (command == "status" && args.size() == 1)
+  {
+    return callTrigger("/fyoyi/status") ? 0 : 1;
+  }
+  if (command == "watch" && args.size() <= 2)
+  {
+    double period_seconds = 1.0;
+    if (args.size() == 2 && !parsePositiveDouble(args[1], period_seconds))
+    {
+      std::cerr << "错误：刷新秒数必须是大于 0 的数字。" << std::endl;
+      return 2;
+    }
+    return watchStatus(nh, period_seconds);
+  }
   if (command == "nav" && args.size() == 2)
   {
     std::set<std::string> names;
@@ -241,6 +355,74 @@ int main(int argc, char** argv)
       return 1;
     }
     std::cout << "已发送导航航点：" << args[1] << std::endl;
+    return 0;
+  }
+  if (command == "patrol" && args.size() >= 2)
+  {
+    bool loop = false;
+    std::size_t first_name_index = 1;
+    if (args[1] == "--loop")
+    {
+      loop = true;
+      first_name_index = 2;
+    }
+    if (first_name_index >= args.size())
+    {
+      std::cerr << "错误：巡逻命令至少需要一个航点。" << std::endl;
+      return 2;
+    }
+
+    std::set<std::string> names;
+    if (!getWaypointNames(names))
+    {
+      return 1;
+    }
+    for (std::size_t i = first_name_index; i < args.size(); ++i)
+    {
+      if (!validateNameSyntax(args[i]) || !requireWaypointExists(names, args[i], "加入巡逻队列"))
+      {
+        return 1;
+      }
+    }
+
+    std::string command_text = joinWords(args, first_name_index);
+    if (loop)
+    {
+      command_text = "--loop " + command_text;
+    }
+    if (!publishOnce(nh, "/fyoyi/patrol_waypoints", command_text))
+    {
+      return 1;
+    }
+    std::cout << (loop ? "已发送循环巡逻队列：" : "已发送导航队列：") << joinWords(args, first_name_index)
+              << std::endl;
+    return 0;
+  }
+  if (command == "cancel" && args.size() == 1)
+  {
+    if (!publishOnce(nh, "/fyoyi/cancel_navigation", "cancel"))
+    {
+      return 1;
+    }
+    std::cout << "已发送取消导航命令。" << std::endl;
+    return 0;
+  }
+  if (command == "pause" && args.size() == 1)
+  {
+    if (!publishOnce(nh, "/fyoyi/pause_patrol", "pause"))
+    {
+      return 1;
+    }
+    std::cout << "已发送暂停巡逻命令。" << std::endl;
+    return 0;
+  }
+  if (command == "resume" && args.size() == 1)
+  {
+    if (!publishOnce(nh, "/fyoyi/resume_patrol", "resume"))
+    {
+      return 1;
+    }
+    std::cout << "已发送继续巡逻命令。" << std::endl;
     return 0;
   }
   if (command == "delete" && args.size() == 2)

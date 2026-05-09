@@ -35,6 +35,10 @@
       主要接口：
         /fyoyi/add_waypoint       geometry_msgs/PoseStamped，添加航点
         /fyoyi/navi_waypoint      std_msgs/String，按名字导航
+        /fyoyi/patrol_waypoints   std_msgs/String，队列导航；格式：航点1 航点2，循环时前面加 loop 参数
+        /fyoyi/cancel_navigation  std_msgs/String，取消当前导航或巡逻
+        /fyoyi/pause_patrol       std_msgs/String，暂停巡逻；会取消当前 move_base 目标
+        /fyoyi/resume_patrol      std_msgs/String，继续巡逻；会从当前航点重新导航
         /fyoyi/navi_result        std_msgs/String，导航结果
         /fyoyi/next_waypoint_name std_msgs/String，设置下一个航点名
         /fyoyi/rename_waypoint    std_msgs/String，重命名航点，格式：旧名字 新名字
@@ -42,6 +46,7 @@
         /fyoyi/save_waypoints     std_srvs/Trigger，保存航点
         /fyoyi/reload_waypoints   std_srvs/Trigger，重新加载航点
         /fyoyi/list_waypoints     std_srvs/Trigger，列出航点
+        /fyoyi/status             std_srvs/Trigger，查看当前导航、巡逻、暂停状态
         /fyoyi/waypoints_marker   visualization_msgs/MarkerArray，RViz 显示
         /fyoyi/waypoints_interactive/update  RViz 交互标记，可右键删除
     -->

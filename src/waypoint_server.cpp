@@ -1,4 +1,5 @@
 #include <actionlib/client/simple_action_client.h>
+#include <actionlib_msgs/GoalID.h>
 #include <actionlib_msgs/GoalStatus.h>
 #include <geometry_msgs/PointStamped.h>
 #include <geometry_msgs/Pose.h>
@@ -19,6 +20,7 @@
 #include <yaml-cpp/yaml.h>
 
 #include <cmath>
+#include <cstdint>
 #include <fstream>
 #include <memory>
 #include <mutex>
@@ -48,6 +50,10 @@ public:
     pnh_.param<std::string>("clicked_point_topic", clicked_point_topic_, "/clicked_point");
     pnh_.param("enable_clicked_point", enable_clicked_point_, false);
     pnh_.param<std::string>("navi_waypoint_topic", navi_waypoint_topic_, "/fyoyi/navi_waypoint");
+    pnh_.param<std::string>("patrol_waypoints_topic", patrol_waypoints_topic_, "/fyoyi/patrol_waypoints");
+    pnh_.param<std::string>("cancel_navigation_topic", cancel_navigation_topic_, "/fyoyi/cancel_navigation");
+    pnh_.param<std::string>("pause_patrol_topic", pause_patrol_topic_, "/fyoyi/pause_patrol");
+    pnh_.param<std::string>("resume_patrol_topic", resume_patrol_topic_, "/fyoyi/resume_patrol");
     pnh_.param<std::string>("delete_waypoint_topic", delete_waypoint_topic_, "/fyoyi/delete_waypoint");
     pnh_.param<std::string>("rename_waypoint_topic", rename_waypoint_topic_, "/fyoyi/rename_waypoint");
     pnh_.param<std::string>("next_waypoint_name_topic", next_waypoint_name_topic_, "/fyoyi/next_waypoint_name");
@@ -69,6 +75,10 @@ public:
 
     add_pose_sub_ = nh_.subscribe(add_pose_topic_, 10, &WaypointServer::addPoseCallback, this);
     navi_waypoint_sub_ = nh_.subscribe(navi_waypoint_topic_, 10, &WaypointServer::naviWaypointCallback, this);
+    patrol_waypoints_sub_ = nh_.subscribe(patrol_waypoints_topic_, 10, &WaypointServer::patrolWaypointsCallback, this);
+    cancel_navigation_sub_ = nh_.subscribe(cancel_navigation_topic_, 10, &WaypointServer::cancelNavigationCallback, this);
+    pause_patrol_sub_ = nh_.subscribe(pause_patrol_topic_, 10, &WaypointServer::pausePatrolCallback, this);
+    resume_patrol_sub_ = nh_.subscribe(resume_patrol_topic_, 10, &WaypointServer::resumePatrolCallback, this);
     delete_waypoint_sub_ = nh_.subscribe(delete_waypoint_topic_, 10, &WaypointServer::deleteWaypointCallback, this);
     rename_waypoint_sub_ = nh_.subscribe(rename_waypoint_topic_, 10, &WaypointServer::renameWaypointCallback, this);
     next_waypoint_name_sub_ = nh_.subscribe(next_waypoint_name_topic_, 10, &WaypointServer::nextWaypointNameCallback, this);
@@ -82,16 +92,24 @@ public:
     reload_srv_ = nh_.advertiseService("/fyoyi/reload_waypoints", &WaypointServer::reloadServiceCallback, this);
     clear_srv_ = nh_.advertiseService("/fyoyi/clear_waypoints", &WaypointServer::clearServiceCallback, this);
     list_srv_ = nh_.advertiseService("/fyoyi/list_waypoints", &WaypointServer::listServiceCallback, this);
+    status_srv_ = nh_.advertiseService("/fyoyi/status", &WaypointServer::statusServiceCallback, this);
 
     loadWaypoints();
     publishAll();
 
-    ROS_INFO("航点服务已启动，航点文件：%s", waypoints_file_.c_str());
-    ROS_INFO("添加航点话题：%s，导航航点话题：%s", add_pose_topic_.c_str(), navi_waypoint_topic_.c_str());
+    ROS_INFO("waypoint_server started, waypoints file: %s", waypoints_file_.c_str());
+    ROS_INFO("add waypoint topic: %s, navigation topic: %s", add_pose_topic_.c_str(), navi_waypoint_topic_.c_str());
   }
 
 private:
   typedef actionlib::SimpleActionClient<move_base_msgs::MoveBaseAction> MoveBaseClient;
+
+  enum class NavOutcome
+  {
+    SUCCEEDED,
+    FAILED,
+    CANCELED
+  };
 
   std::string defaultWaypointsFile() const
   {
@@ -178,6 +196,18 @@ private:
     return false;
   }
 
+  std::vector<std::string> splitWords(const std::string& text) const
+  {
+    std::vector<std::string> words;
+    std::istringstream input(text);
+    std::string word;
+    while (input >> word)
+    {
+      words.push_back(word);
+    }
+    return words;
+  }
+
   Waypoint poseMsgToWaypoint(const std::string& name, const geometry_msgs::PoseStamped& msg) const
   {
     Waypoint waypoint;
@@ -208,7 +238,7 @@ private:
     }
     catch (const std::exception& err)
     {
-      ROS_WARN("忽略无效的航点配置项：%s", err.what());
+      ROS_WARN("ignore invalid waypoint yaml item: %s", err.what());
       return false;
     }
   }
@@ -221,7 +251,7 @@ private:
     std::ifstream input(waypoints_file_);
     if (!input.good())
     {
-      ROS_WARN("航点文件不存在，将使用空航点列表：%s", waypoints_file_.c_str());
+      ROS_WARN("waypoints file does not exist, start with empty list: %s", waypoints_file_.c_str());
       return;
     }
 
@@ -240,11 +270,11 @@ private:
           }
         }
       }
-      ROS_INFO("已加载 %zu 个航点", waypoints_.size());
+      ROS_INFO("loaded %zu waypoints", waypoints_.size());
     }
     catch (const std::exception& err)
     {
-      ROS_WARN("加载航点文件失败 %s：%s", waypoints_file_.c_str(), err.what());
+      ROS_WARN("failed to load waypoints file %s: %s", waypoints_file_.c_str(), err.what());
     }
   }
 
@@ -277,7 +307,7 @@ private:
 
     std::ofstream output(waypoints_file_);
     output << out.c_str() << "\n";
-    ROS_INFO("已保存 %zu 个航点到：%s", waypoints_.size(), waypoints_file_.c_str());
+    ROS_INFO("saved %zu waypoints to: %s", waypoints_.size(), waypoints_file_.c_str());
   }
 
   void saveIfNeeded()
@@ -298,7 +328,7 @@ private:
     }
     publishAll();
     saveIfNeeded();
-    ROS_INFO("已添加航点 %s：x=%.3f y=%.3f", name.c_str(), msg->pose.position.x, msg->pose.position.y);
+    ROS_INFO("added waypoint %s: x=%.3f y=%.3f", name.c_str(), msg->pose.position.x, msg->pose.position.y);
   }
 
   void clickedPointCallback(const geometry_msgs::PointStamped::ConstPtr& msg)
@@ -342,11 +372,11 @@ private:
     if (deleted)
     {
       saveIfNeeded();
-      ROS_INFO("已删除航点：%s", name.c_str());
+      ROS_INFO("deleted waypoint: %s", name.c_str());
     }
     else
     {
-      ROS_WARN("航点不存在：%s", name.c_str());
+      ROS_WARN("waypoint not found: %s", name.c_str());
     }
   }
 
@@ -358,12 +388,12 @@ private:
     input >> old_name >> new_name;
     if (old_name.empty() || new_name.empty())
     {
-      ROS_WARN("重命名格式错误，应为：旧名字 新名字");
+      ROS_WARN("rename format error, expected: old_name new_name");
       return;
     }
     if (!isValidName(new_name))
     {
-      ROS_WARN("航点名无效，只允许英文、数字、下划线和横线：%s", new_name.c_str());
+      ROS_WARN("invalid waypoint name, only letters, digits, _ and - are allowed: %s", new_name.c_str());
       return;
     }
 
@@ -372,7 +402,7 @@ private:
       std::lock_guard<std::recursive_mutex> guard(mutex_);
       if (nameExistsLocked(new_name))
       {
-        ROS_WARN("航点名已存在：%s", new_name.c_str());
+        ROS_WARN("waypoint name already exists: %s", new_name.c_str());
         return;
       }
       for (auto& waypoint : waypoints_)
@@ -390,11 +420,11 @@ private:
     {
       publishAll();
       saveIfNeeded();
-      ROS_INFO("已重命名航点：%s -> %s", old_name.c_str(), new_name.c_str());
+      ROS_INFO("renamed waypoint: %s -> %s", old_name.c_str(), new_name.c_str());
     }
     else
     {
-      ROS_WARN("航点不存在：%s", old_name.c_str());
+      ROS_WARN("waypoint not found: %s", old_name.c_str());
     }
   }
 
@@ -403,19 +433,19 @@ private:
     const std::string name = msg->data;
     if (!isValidName(name))
     {
-      ROS_WARN("航点名无效，只允许英文、数字、下划线和横线：%s", name.c_str());
+      ROS_WARN("invalid waypoint name, only letters, digits, _ and - are allowed: %s", name.c_str());
       return;
     }
     {
       std::lock_guard<std::recursive_mutex> guard(mutex_);
       if (nameExistsLocked(name))
       {
-        ROS_WARN("航点名已存在：%s", name.c_str());
+        ROS_WARN("waypoint name already exists: %s", name.c_str());
         return;
       }
       next_custom_name_ = name;
     }
-    ROS_INFO("下一个通过 RViz 添加的航点将命名为：%s", name.c_str());
+    ROS_INFO("next RViz waypoint name: %s", name.c_str());
   }
 
   void interactiveDeleteCallback(const visualization_msgs::InteractiveMarkerFeedbackConstPtr& feedback)
@@ -472,35 +502,217 @@ private:
     return true;
   }
 
+  bool statusServiceCallback(std_srvs::Trigger::Request&, std_srvs::Trigger::Response& res)
+  {
+    std::lock_guard<std::mutex> guard(task_mutex_);
+    res.success = true;
+    res.message = buildStatusTextLocked();
+    return true;
+  }
+
   void naviWaypointCallback(const std_msgs::String::ConstPtr& msg)
   {
     const std::string name = msg->data;
     if (name.empty())
     {
-      ROS_WARN("航点名为空");
+      ROS_WARN("empty waypoint name");
       return;
     }
-    std::thread(&WaypointServer::navigateToWaypoint, this, name).detach();
+    const uint64_t task_id = startTask("单点导航", name, std::vector<std::string>{ name }, false);
+    std::thread(&WaypointServer::singleNavigationThread, this, name, task_id).detach();
   }
 
-  void navigateToWaypoint(const std::string& name)
+  void patrolWaypointsCallback(const std_msgs::String::ConstPtr& msg)
+  {
+    std::vector<std::string> words = splitWords(msg->data);
+    bool loop = false;
+    if (!words.empty() && words.front() == "--loop")
+    {
+      loop = true;
+      words.erase(words.begin());
+    }
+
+    if (words.empty())
+    {
+      publishResult("失败:巡逻:航点队列为空");
+      ROS_WARN("empty patrol waypoint list");
+      return;
+    }
+
+    for (const auto& name : words)
+    {
+      Waypoint waypoint;
+      if (!findWaypoint(name, waypoint))
+      {
+        publishResult("失败:巡逻:航点不存在:" + name);
+        ROS_WARN("patrol waypoint not found: %s", name.c_str());
+        return;
+      }
+    }
+
+    const uint64_t task_id = startTask(loop ? "循环巡逻" : "队列导航", words.front(), words, loop);
+    std::thread(&WaypointServer::patrolThread, this, words, loop, task_id).detach();
+  }
+
+  void cancelNavigationCallback(const std_msgs::String::ConstPtr&)
+  {
+    requestCancel("用户取消导航");
+  }
+
+  void pausePatrolCallback(const std_msgs::String::ConstPtr&)
+  {
+    std::lock_guard<std::mutex> guard(task_mutex_);
+    if (task_mode_ == "队列导航" || task_mode_ == "循环巡逻" || task_mode_ == "暂停")
+    {
+      paused_ = true;
+      task_mode_ = "暂停";
+      last_result_ = "巡逻已暂停";
+      publishResult(last_result_);
+      ROS_INFO("patrol paused");
+    }
+    else
+    {
+      publishResult("失败:暂停:当前没有巡逻任务");
+      ROS_WARN("no patrol task to pause");
+    }
+  }
+
+  void resumePatrolCallback(const std_msgs::String::ConstPtr&)
+  {
+    std::lock_guard<std::mutex> guard(task_mutex_);
+    if (paused_)
+    {
+      paused_ = false;
+      task_mode_ = patrol_loop_ ? "循环巡逻" : "队列导航";
+      last_result_ = "巡逻已继续";
+      publishResult(last_result_);
+      ROS_INFO("patrol resumed");
+    }
+    else
+    {
+      publishResult("失败:继续:当前没有暂停的巡逻任务");
+      ROS_WARN("no paused patrol task to resume");
+    }
+  }
+
+  uint64_t startTask(const std::string& mode, const std::string& current_goal,
+                     const std::vector<std::string>& queue, bool loop)
+  {
+    cancelMoveBaseGoals();
+    std::lock_guard<std::mutex> guard(task_mutex_);
+    ++task_generation_;
+    cancel_requested_ = false;
+    paused_ = false;
+    task_mode_ = mode;
+    current_goal_ = current_goal;
+    patrol_queue_ = queue;
+    patrol_index_ = 0;
+    patrol_loop_ = loop;
+    last_result_ = "任务已启动";
+    return task_generation_;
+  }
+
+  void requestCancel(const std::string& reason)
+  {
+    {
+      std::lock_guard<std::mutex> guard(task_mutex_);
+      cancel_requested_ = true;
+      paused_ = false;
+      task_mode_ = "空闲";
+      current_goal_.clear();
+      patrol_queue_.clear();
+      patrol_index_ = 0;
+      patrol_loop_ = false;
+      last_result_ = reason;
+    }
+    cancelMoveBaseGoals();
+    publishResult(reason);
+    ROS_INFO("navigation canceled");
+  }
+
+  void singleNavigationThread(const std::string& name, uint64_t task_id)
+  {
+    const NavOutcome outcome = navigateToWaypoint(name, task_id, false);
+    std::lock_guard<std::mutex> guard(task_mutex_);
+    if (task_id == task_generation_ && outcome != NavOutcome::CANCELED)
+    {
+      task_mode_ = "空闲";
+      current_goal_.clear();
+    }
+  }
+
+  void patrolThread(const std::vector<std::string>& names, bool loop, uint64_t task_id)
+  {
+    std::size_t index = 0;
+    do
+    {
+      for (; index < names.size(); ++index)
+      {
+        if (isTaskStopped(task_id))
+        {
+          return;
+        }
+
+        {
+          std::lock_guard<std::mutex> guard(task_mutex_);
+          current_goal_ = names[index];
+          patrol_index_ = index;
+        }
+
+        const NavOutcome outcome = navigateToWaypoint(names[index], task_id, true);
+        if (outcome == NavOutcome::CANCELED)
+        {
+          return;
+        }
+        if (outcome == NavOutcome::FAILED)
+        {
+          std::lock_guard<std::mutex> guard(task_mutex_);
+          if (task_id == task_generation_)
+          {
+            task_mode_ = "空闲";
+            current_goal_.clear();
+            patrol_queue_.clear();
+            patrol_index_ = 0;
+            patrol_loop_ = false;
+          }
+          return;
+        }
+      }
+      index = 0;
+    } while (loop && ros::ok() && !isTaskStopped(task_id));
+
+    std::lock_guard<std::mutex> guard(task_mutex_);
+    if (task_id == task_generation_)
+    {
+      task_mode_ = "空闲";
+      current_goal_.clear();
+      patrol_queue_.clear();
+      patrol_index_ = 0;
+      patrol_loop_ = false;
+      last_result_ = loop ? "循环巡逻已结束" : "队列导航已完成";
+      publishResult(last_result_);
+    }
+  }
+
+  NavOutcome navigateToWaypoint(const std::string& name, uint64_t task_id, bool allow_pause)
   {
     Waypoint waypoint;
     if (!findWaypoint(name, waypoint))
     {
       publishResult("失败:" + name + ":航点不存在");
-      ROS_WARN("航点不存在：%s", name.c_str());
-      return;
+      ROS_WARN("waypoint not found: %s", name.c_str());
+      return NavOutcome::FAILED;
     }
 
     MoveBaseClient move_base_client(move_base_action_, true);
 
-    ROS_INFO("等待 move_base action 服务：%s", move_base_action_.c_str());
+    ROS_INFO("waiting for move_base action server: %s", move_base_action_.c_str());
     if (!move_base_client.waitForServer(ros::Duration(10.0)))
     {
       publishResult("失败:" + name + ":move_base未启动");
-      ROS_ERROR("move_base action 服务未启动");
-      return;
+      ROS_ERROR("move_base action server is not ready");
+      setLastResult("失败:" + name + ":move_base未启动");
+      return NavOutcome::FAILED;
     }
 
     move_base_msgs::MoveBaseGoal goal;
@@ -508,23 +720,129 @@ private:
     goal.target_pose.header.frame_id = waypoint.frame_id;
     goal.target_pose.pose = waypoint.pose;
 
-    ROS_INFO("开始导航到航点：%s", name.c_str());
-    move_base_client.sendGoal(goal);
-    move_base_client.waitForResult();
+    while (ros::ok())
+    {
+      bool restart_current_goal = false;
 
-    const actionlib::SimpleClientGoalState state = move_base_client.getState();
-    if (state == actionlib::SimpleClientGoalState::SUCCEEDED)
-    {
-      publishResult("完成:" + name);
-      ROS_INFO("已到达航点：%s", name.c_str());
-    }
-    else
-    {
+      if (isTaskStopped(task_id))
+      {
+        move_base_client.cancelGoal();
+        setLastResult("已取消:" + name);
+        return NavOutcome::CANCELED;
+      }
+
+      ROS_INFO("navigating to waypoint: %s", name.c_str());
+      move_base_client.sendGoal(goal);
+      while (ros::ok() && !move_base_client.waitForResult(ros::Duration(0.2)))
+      {
+        if (isTaskStopped(task_id))
+        {
+          move_base_client.cancelGoal();
+          setLastResult("已取消:" + name);
+          return NavOutcome::CANCELED;
+        }
+        if (allow_pause && isTaskPaused(task_id))
+        {
+          move_base_client.cancelGoal();
+          publishResult("暂停:" + name);
+          ROS_INFO("paused while navigating to waypoint: %s", name.c_str());
+          while (ros::ok() && isTaskPaused(task_id) && !isTaskStopped(task_id))
+          {
+            ros::WallDuration(0.1).sleep();
+          }
+          if (isTaskStopped(task_id))
+          {
+            setLastResult("已取消:" + name);
+            return NavOutcome::CANCELED;
+          }
+          ROS_INFO("resume waypoint navigation: %s", name.c_str());
+          restart_current_goal = true;
+          break;
+        }
+      }
+
+      if (restart_current_goal || (allow_pause && isTaskPaused(task_id)))
+      {
+        continue;
+      }
+
+      const actionlib::SimpleClientGoalState state = move_base_client.getState();
+      if (state == actionlib::SimpleClientGoalState::SUCCEEDED)
+      {
+        const std::string result = "完成:" + name;
+        publishResult(result);
+        setLastResult(result);
+        ROS_INFO("arrived waypoint: %s", name.c_str());
+        return NavOutcome::SUCCEEDED;
+      }
+
       std::ostringstream result;
       result << "失败:" << name << ":state=" << state.toString();
       publishResult(result.str());
-      ROS_WARN("导航失败：%s，状态：%s", name.c_str(), state.toString().c_str());
+      setLastResult(result.str());
+      ROS_WARN("navigation failed: %s, state: %s", name.c_str(), state.toString().c_str());
+      return NavOutcome::FAILED;
     }
+
+    return NavOutcome::CANCELED;
+  }
+
+  bool isTaskStopped(uint64_t task_id)
+  {
+    std::lock_guard<std::mutex> guard(task_mutex_);
+    return cancel_requested_ || task_id != task_generation_;
+  }
+
+  bool isTaskPaused(uint64_t task_id)
+  {
+    std::lock_guard<std::mutex> guard(task_mutex_);
+    return paused_ && task_id == task_generation_;
+  }
+
+  void setLastResult(const std::string& result)
+  {
+    std::lock_guard<std::mutex> guard(task_mutex_);
+    last_result_ = result;
+  }
+
+  void cancelMoveBaseGoals()
+  {
+    actionlib_msgs::GoalID cancel_msg;
+    cancel_pub_ = nh_.advertise<actionlib_msgs::GoalID>(move_base_action_ + "/cancel", 1);
+    ros::WallDuration(0.1).sleep();
+    cancel_pub_.publish(cancel_msg);
+  }
+
+  std::string buildStatusTextLocked() const
+  {
+    std::ostringstream output;
+    output << "当前状态：" << task_mode_;
+    if (!current_goal_.empty())
+    {
+      output << "\n当前目标：" << current_goal_;
+    }
+    if (!patrol_queue_.empty())
+    {
+      output << "\n巡逻队列：";
+      for (std::size_t i = 0; i < patrol_queue_.size(); ++i)
+      {
+        if (i > 0)
+        {
+          output << " -> ";
+        }
+        if (i == patrol_index_)
+        {
+          output << "[" << patrol_queue_[i] << "]";
+        }
+        else
+        {
+          output << patrol_queue_[i];
+        }
+      }
+      output << "\n循环巡逻：" << (patrol_loop_ ? "是" : "否");
+    }
+    output << "\n上次结果：" << (last_result_.empty() ? "无" : last_result_);
+    return output.str();
   }
 
   void publishResult(const std::string& text)
@@ -688,6 +1006,10 @@ private:
   ros::Subscriber add_pose_sub_;
   ros::Subscriber clicked_point_sub_;
   ros::Subscriber navi_waypoint_sub_;
+  ros::Subscriber patrol_waypoints_sub_;
+  ros::Subscriber cancel_navigation_sub_;
+  ros::Subscriber pause_patrol_sub_;
+  ros::Subscriber resume_patrol_sub_;
   ros::Subscriber delete_waypoint_sub_;
   ros::Subscriber rename_waypoint_sub_;
   ros::Subscriber next_waypoint_name_sub_;
@@ -695,16 +1017,28 @@ private:
   ros::Publisher marker_pub_;
   ros::Publisher list_pub_;
   ros::Publisher result_pub_;
+  ros::Publisher cancel_pub_;
   ros::ServiceServer save_srv_;
   ros::ServiceServer reload_srv_;
   ros::ServiceServer clear_srv_;
   ros::ServiceServer list_srv_;
+  ros::ServiceServer status_srv_;
   std::shared_ptr<interactive_markers::InteractiveMarkerServer> interactive_server_;
   interactive_markers::MenuHandler menu_handler_;
 
   std::recursive_mutex mutex_;
+  std::mutex task_mutex_;
   std::vector<Waypoint> waypoints_;
   std::string next_custom_name_;
+  uint64_t task_generation_ = 0;
+  bool cancel_requested_ = false;
+  bool paused_ = false;
+  std::string task_mode_ = "空闲";
+  std::string current_goal_;
+  std::vector<std::string> patrol_queue_;
+  std::size_t patrol_index_ = 0;
+  bool patrol_loop_ = false;
+  std::string last_result_ = "无";
 
   std::string map_frame_;
   std::string waypoints_file_;
@@ -712,6 +1046,10 @@ private:
   std::string clicked_point_topic_;
   bool enable_clicked_point_;
   std::string navi_waypoint_topic_;
+  std::string patrol_waypoints_topic_;
+  std::string cancel_navigation_topic_;
+  std::string pause_patrol_topic_;
+  std::string resume_patrol_topic_;
   std::string delete_waypoint_topic_;
   std::string rename_waypoint_topic_;
   std::string next_waypoint_name_topic_;
