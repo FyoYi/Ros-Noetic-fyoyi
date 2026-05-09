@@ -12,10 +12,12 @@ find_package(catkin REQUIRED COMPONENTS
   geometry_msgs
   interactive_markers
   move_base_msgs
+  nav_msgs
   roscpp
   roslib
   std_msgs
   std_srvs
+  tf
   visualization_msgs
 )
 
@@ -110,9 +112,9 @@ find_package(yaml-cpp REQUIRED)
 ## CATKIN_DEPENDS: catkin_packages dependent projects also need
 ## DEPENDS: system dependencies of this project that dependent projects also need
 catkin_package(
-#  INCLUDE_DIRS include
+  INCLUDE_DIRS include
 #  LIBRARIES ros_fyoyi
-  CATKIN_DEPENDS actionlib geometry_msgs interactive_markers move_base_msgs roscpp roslib std_msgs std_srvs visualization_msgs
+  CATKIN_DEPENDS actionlib geometry_msgs interactive_markers move_base_msgs nav_msgs roscpp roslib std_msgs std_srvs tf visualization_msgs
 #  DEPENDS system_lib
 )
 
@@ -123,7 +125,7 @@ catkin_package(
 ## Specify additional locations of header files
 ## Your package locations should be listed before other locations
 include_directories(
-# include
+  include
   ${catkin_INCLUDE_DIRS}
 )
 
@@ -174,6 +176,22 @@ target_link_libraries(waypoint_cli
   ${catkin_LIBRARIES}
 )
 
+add_executable(autonomous_explorer
+  src/autonomous_explorer.cpp
+)
+add_dependencies(autonomous_explorer ${${PROJECT_NAME}_EXPORTED_TARGETS} ${catkin_EXPORTED_TARGETS})
+target_link_libraries(autonomous_explorer
+  ${catkin_LIBRARIES}
+)
+
+add_executable(auto_map_saver
+  src/auto_map_saver.cpp
+)
+add_dependencies(auto_map_saver ${${PROJECT_NAME}_EXPORTED_TARGETS} ${catkin_EXPORTED_TARGETS})
+target_link_libraries(auto_map_saver
+  ${catkin_LIBRARIES}
+)
+
 #############
 ## Install ##
 #############
@@ -187,7 +205,7 @@ target_link_libraries(waypoint_cli
 #   scripts/my_python_script
 #   DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
 # )
-install(TARGETS waypoint_server waypoint_cli
+install(TARGETS waypoint_server waypoint_cli autonomous_explorer auto_map_saver
   RUNTIME DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
 )
 
@@ -212,7 +230,7 @@ install(TARGETS waypoint_server waypoint_cli
 #   PATTERN ".svn" EXCLUDE
 # )
 
-install(DIRECTORY launch config maps rviz
+install(DIRECTORY launch config maps rviz include
   DESTINATION ${CATKIN_PACKAGE_SHARE_DESTINATION}
 )
 

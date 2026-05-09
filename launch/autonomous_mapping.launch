@@ -1,0 +1,195 @@
+<launch>
+    <!--
+      自主建图入口。
+
+      这个 launch 与 waypoint_nav.launch 相互独立：
+        1. 不启动 map_server
+        2. 不启动 AMCL
+        3. 使用 slam_gmapping 发布 /map 和 map -> odom
+        4. 使用 move_base 做避障和执行目标
+      5. 使用本包 autonomous_explorer 自动寻找 frontier 并发送 move_base 目标
+      6. 使用本包 auto_map_saver 在探索基本完成后保存地图
+
+      启动前仍需要外部机器人 bringup 已经提供：
+        /scan、/odom、/tf，以及订阅 /cmd_vel 的底盘控制器。
+    -->
+
+    <arg name="rviz_config" default="$(find ros_fyoyi)/rviz/Local_plan.rviz"/>
+
+    <arg name="map_frame" default="map"/>
+    <arg name="odom_frame" default="odom"/>
+    <arg name="base_frame" default="base_footprint"/>
+
+    <arg name="scan_topic" default="/scan"/>
+    <arg name="odom_topic" default="odom"/>
+
+    <arg name="robot_radius" default="0.25"/>
+    <arg name="teb_footprint_radius" default="0.17"/>
+    <arg name="inflation_radius" default="0.65"/>
+    <arg name="obstacle_range" default="1.0"/>
+    <arg name="raytrace_range" default="6.0"/>
+
+    <arg name="global_planner" default="global_planner/GlobalPlanner"/>
+    <arg name="local_planner" default="teb_local_planner/TebLocalPlannerROS"/>
+    <arg name="controller_frequency" default="10.0"/>
+    <arg name="planner_frequency" default="1.0"/>
+
+    <arg name="use_rviz" default="true"/>
+    <arg name="use_autonomous_explorer" default="true"/>
+    <arg name="exploration_strategy" default="safe_frontier"/>
+    <arg name="use_explore_lite" default="false"/>
+    <arg name="auto_save_map" default="true"/>
+    <arg name="default_map_root" default="$(find ros_fyoyi)/maps/default"/>
+    <arg name="map_folder_name" default=""/>
+    <arg name="map_save_path" default=""/>
+    <arg name="prompt_on_complete" default="true"/>
+    <arg name="frontier_threshold" default="30"/>
+    <arg name="stable_duration" default="12.0"/>
+    <arg name="no_goal_stable_duration" default="6.0"/>
+    <arg name="min_runtime" default="45.0"/>
+
+    <!-- gmapping 的地图范围。室内小车通常先用 20m x 20m，不够时启动时覆盖这些参数。 -->
+    <arg name="xmin" default="-10.0"/>
+    <arg name="ymin" default="-10.0"/>
+    <arg name="xmax" default="10.0"/>
+    <arg name="ymax" default="10.0"/>
+    <arg name="delta" default="0.05"/>
+    <arg name="max_laser_range" default="6.0"/>
+
+    <rosparam subst_value="true" ns="ros_fyoyi/autonomous_mapping">
+        rviz_config: "$(arg rviz_config)"
+        map_frame: "$(arg map_frame)"
+        odom_frame: "$(arg odom_frame)"
+        base_frame: "$(arg base_frame)"
+        scan_topic: "$(arg scan_topic)"
+        odom_topic: "$(arg odom_topic)"
+        robot_radius: "$(arg robot_radius)"
+        use_autonomous_explorer: "$(arg use_autonomous_explorer)"
+        exploration_strategy: "$(arg exploration_strategy)"
+        use_explore_lite: "$(arg use_explore_lite)"
+        auto_save_map: "$(arg auto_save_map)"
+        default_map_root: "$(arg default_map_root)"
+        map_folder_name: "$(arg map_folder_name)"
+        map_save_path: "$(arg map_save_path)"
+    </rosparam>
+
+    <node pkg="gmapping" type="slam_gmapping" name="slam_gmapping" output="log"
+          launch-prefix="bash -c 'exec &quot;$0&quot; &quot;$@&quot; &gt;/tmp/ros_fyoyi_slam_gmapping.log 2&gt;&amp;1' ">
+        <param name="map_frame" value="$(arg map_frame)"/>
+        <param name="odom_frame" value="$(arg odom_frame)"/>
+        <param name="base_frame" value="$(arg base_frame)"/>
+        <param name="map_update_interval" value="2.0"/>
+        <param name="maxUrange" value="$(arg max_laser_range)"/>
+        <param name="maxRange" value="$(arg max_laser_range)"/>
+        <param name="sigma" value="0.05"/>
+        <param name="kernelSize" value="1"/>
+        <param name="lstep" value="0.05"/>
+        <param name="astep" value="0.05"/>
+        <param name="iterations" value="5"/>
+        <param name="lsigma" value="0.075"/>
+        <param name="ogain" value="3.0"/>
+        <param name="lskip" value="0"/>
+        <param name="minimumScore" value="50"/>
+        <param name="srr" value="0.1"/>
+        <param name="srt" value="0.2"/>
+        <param name="str" value="0.1"/>
+        <param name="stt" value="0.2"/>
+        <param name="linearUpdate" value="0.2"/>
+        <param name="angularUpdate" value="0.2"/>
+        <param name="temporalUpdate" value="2.0"/>
+        <param name="resampleThreshold" value="0.5"/>
+        <param name="particles" value="30"/>
+        <param name="xmin" value="$(arg xmin)"/>
+        <param name="ymin" value="$(arg ymin)"/>
+        <param name="xmax" value="$(arg xmax)"/>
+        <param name="ymax" value="$(arg ymax)"/>
+        <param name="delta" value="$(arg delta)"/>
+        <param name="llsamplerange" value="0.01"/>
+        <param name="llsamplestep" value="0.01"/>
+        <param name="lasamplerange" value="0.005"/>
+        <param name="lasamplestep" value="0.005"/>
+        <remap from="scan" to="$(arg scan_topic)"/>
+    </node>
+
+    <node pkg="move_base" type="move_base" name="move_base" output="log">
+        <rosparam file="$(find ros_fyoyi)/config/costmap_common_params.yaml" command="load" ns="global_costmap" subst_value="true"/>
+        <rosparam file="$(find ros_fyoyi)/config/costmap_common_params.yaml" command="load" ns="local_costmap" subst_value="true"/>
+        <rosparam file="$(find ros_fyoyi)/config/mapping_global_costmap_params.yaml" command="load" subst_value="true"/>
+        <rosparam file="$(find ros_fyoyi)/config/local_costmap_params.yaml" command="load" subst_value="true"/>
+        <param name="base_global_planner" value="$(arg global_planner)"/>
+        <param name="base_local_planner" value="$(arg local_planner)"/>
+        <rosparam file="$(find ros_fyoyi)/config/teb_local_planner_params.yaml" command="load" subst_value="true"/>
+        <param name="TebLocalPlannerROS/max_vel_x" value="0.32"/>
+        <param name="TebLocalPlannerROS/max_vel_x_backwards" value="0.10"/>
+        <param name="TebLocalPlannerROS/max_vel_theta" value="0.90"/>
+        <param name="TebLocalPlannerROS/acc_lim_x" value="0.40"/>
+        <param name="TebLocalPlannerROS/acc_lim_theta" value="0.90"/>
+        <param name="TebLocalPlannerROS/min_obstacle_dist" value="0.24"/>
+        <param name="TebLocalPlannerROS/inflation_dist" value="0.55"/>
+        <param name="TebLocalPlannerROS/weight_obstacle" value="65"/>
+        <param name="controller_frequency" value="$(arg controller_frequency)" type="double"/>
+        <param name="planner_frequency" value="$(arg planner_frequency)" type="double"/>
+        <param name="GlobalPlanner/allow_unknown" value="true"/>
+        <param name="GlobalPlanner/default_tolerance" value="0.2"/>
+        <param name="NavfnROS/allow_unknown" value="true"/>
+    </node>
+
+    <node if="$(arg use_autonomous_explorer)" pkg="ros_fyoyi" type="autonomous_explorer" name="autonomous_explorer" output="screen">
+        <param name="robot_base_frame" value="$(arg base_frame)"/>
+        <param name="map_frame" value="$(arg map_frame)"/>
+        <param name="map_topic" value="/map"/>
+        <param name="strategy" value="$(arg exploration_strategy)"/>
+        <param name="planner_period" value="2.0"/>
+        <param name="goal_timeout" value="45.0"/>
+        <param name="no_progress_timeout" value="16.0"/>
+        <param name="stop_motion_timeout" value="16.0"/>
+        <param name="stop_motion_epsilon" value="0.05"/>
+        <param name="max_stuck_replans_before_prompt" value="4"/>
+        <param name="progress_epsilon" value="0.08"/>
+        <param name="make_plan_tolerance" value="0.25"/>
+        <param name="max_goal_search_attempts" value="16"/>
+        <param name="completion_no_goal_duration" value="28.0"/>
+        <param name="min_frontier_cells" value="6"/>
+        <param name="frontier_gain_scale" value="0.85"/>
+        <param name="frontier_goal_offset" value="0.5"/>
+        <param name="candidate_search_radius" value="3.2"/>
+        <param name="frontier_preprocess_iterations" value="3"/>
+        <param name="frontier_distance_alpha" value="0.85"/>
+        <param name="frontier_size_weight" value="0.015"/>
+        <param name="min_goal_distance" value="0.9"/>
+        <param name="max_goal_distance" value="10.0"/>
+        <param name="obstacle_clearance" value="0.35"/>
+        <param name="rejected_goal_radius" value="0.65"/>
+    </node>
+
+    <!-- 如果你已安装 explore_lite，也可以关闭 use_autonomous_explorer 并打开这个节点。 -->
+    <node if="$(arg use_explore_lite)" pkg="explore_lite" type="explore" name="explore" output="screen">
+        <param name="robot_base_frame" value="$(arg base_frame)"/>
+        <param name="costmap_topic" value="/move_base/global_costmap/costmap"/>
+        <param name="costmap_updates_topic" value="/move_base/global_costmap/costmap_updates"/>
+        <param name="visualize" value="true"/>
+        <param name="planner_frequency" value="0.25"/>
+        <param name="progress_timeout" value="30.0"/>
+        <param name="potential_scale" value="3.0"/>
+        <param name="orientation_scale" value="0.0"/>
+        <param name="gain_scale" value="1.0"/>
+        <param name="transform_tolerance" value="1.0"/>
+        <param name="min_frontier_size" value="0.5"/>
+    </node>
+
+    <node if="$(arg auto_save_map)" pkg="ros_fyoyi" type="auto_map_saver" name="auto_map_saver" output="screen">
+        <param name="map_path" value="$(arg map_save_path)"/>
+        <param name="default_root" value="$(arg default_map_root)"/>
+        <param name="folder_name" value="$(arg map_folder_name)"/>
+        <param name="prompt_on_complete" value="$(arg prompt_on_complete)"/>
+        <param name="frontier_threshold" value="$(arg frontier_threshold)"/>
+        <param name="stable_duration" value="$(arg stable_duration)"/>
+        <param name="no_goal_stable_duration" value="$(arg no_goal_stable_duration)"/>
+        <param name="min_runtime" value="$(arg min_runtime)"/>
+        <param name="min_free_cells" value="200"/>
+        <param name="check_period" value="2.0"/>
+        <param name="stop_robot" value="true"/>
+    </node>
+
+    <node if="$(arg use_rviz)" name="rviz" pkg="rviz" type="rviz" args="-d $(arg rviz_config)"/>
+</launch>

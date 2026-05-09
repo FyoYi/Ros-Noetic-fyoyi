@@ -154,6 +154,7 @@ teb_local_planner
 global_planner
 clear_costmap_recovery
 rotate_recovery
+gmapping
 ```
 
 如果某个包缺失，`roslaunch` 会提示类似：
@@ -168,6 +169,13 @@ cannot launch node of type [...]
 sudo apt install ros-noetic-navigation
 sudo apt install ros-noetic-teb-local-planner
 sudo apt install ros-noetic-global-planner
+sudo apt install ros-noetic-slam-gmapping
+```
+
+`autonomous_mapping.launch` 默认使用本包自带的简单 frontier explorer，不强制依赖 `explore_lite`。如果你想改用 `explore_lite`，再额外安装：
+
+```bash
+sudo apt install ros-noetic-explore-lite
 ```
 
 `waterplus_map_tools` 现在不是本包必需依赖。只有你主动设置 `use_waterplus:=true` 兼容老教程时，才需要额外安装它。
@@ -218,6 +226,136 @@ roslaunch ros_fyoyi waypoint_nav.launch
 
 ```bash
 roslaunch ros_fyoyi waypoint_nav.launch --nodes
+```
+
+## 自主建图
+
+如果你还没有地图，可以使用独立的自主建图入口：
+
+```bash
+cd ~/catkin_ws
+source devel/setup.bash
+roslaunch ros_fyoyi autonomous_mapping.launch
+```
+
+它会启动：
+
+```text
+slam_gmapping      根据 /scan、/odom、/tf 建图，并发布 /map 与 map -> odom
+move_base          做局部避障和目标执行，并发布 /cmd_vel
+autonomous_explorer  C++ 自主探索节点，默认使用 safe_frontier 策略选择探索目标
+auto_map_saver     探索基本完成后停车，询问用户确认并保存地图
+rviz               显示地图、路径、机器人和探索过程
+```
+
+注意不要同时运行 `waypoint_nav.launch` 和 `autonomous_mapping.launch`。前者使用 `map_server + amcl`，后者使用 `slam_gmapping`，两者都会参与 `map` 坐标系相关的数据链路，同时运行会互相冲突。
+
+如果机器人底盘坐标是 `base_link`，启动时覆盖：
+
+```bash
+roslaunch ros_fyoyi autonomous_mapping.launch base_frame:=base_link
+```
+
+如果环境超过默认 20m x 20m 地图范围，可以扩大 gmapping 地图边界：
+
+```bash
+roslaunch ros_fyoyi autonomous_mapping.launch xmin:=-20 ymin:=-20 xmax:=20 ymax:=20
+```
+
+运行时日志会持续显示当前状态，例如：
+
+```text
+自主探索：正在检查未探索区域，frontier_cells=...
+自主探索：正在前往下一个探索点 x=... y=...
+自动保存：正在检查是否探索完成，frontier_cells=... free_cells=...
+```
+
+默认探索策略是 `safe_frontier`。它不会直接把 frontier 中心点当目标，而是在 frontier 附近搜索离障碍物更安全的自由栅格；如果 `move_base` 规划失败，会把这个目标附近加入临时黑名单，然后换下一个目标。
+
+默认情况下，系统判断探索基本完成后会停车，并在终端询问是否保存地图。直接回车或输入 `y` 会保存，输入 `n` 会跳过保存。
+
+如果保存时不输入目录和文件夹名，地图会保存到：
+
+```text
+/home/fyoyi/catkin_ws/src/ros_fyoyi/maps/default/当前年份日期时间/map.yaml
+/home/fyoyi/catkin_ws/src/ros_fyoyi/maps/default/当前年份日期时间/map.pgm
+```
+
+其中 `当前年份日期时间` 类似 `20260509_153000`，文件名固定为 `map.yaml` 和 `map.pgm`。
+
+如果只想指定文件夹名，不指定保存位置，可以启动时传：
+
+```bash
+roslaunch ros_fyoyi autonomous_mapping.launch map_folder_name:=lab01
+```
+
+保存位置会是：
+
+```text
+/home/fyoyi/catkin_ws/src/ros_fyoyi/maps/default/lab01/map.yaml
+/home/fyoyi/catkin_ws/src/ros_fyoyi/maps/default/lab01/map.pgm
+```
+
+如果想指定保存根目录和文件夹名，可以启动时传：
+
+```bash
+roslaunch ros_fyoyi autonomous_mapping.launch default_map_root:=/home/fyoyi/my_maps map_folder_name:=lab01
+```
+
+保存位置会是：
+
+```text
+/home/fyoyi/my_maps/lab01/map.yaml
+/home/fyoyi/my_maps/lab01/map.pgm
+```
+
+如果想完全不询问，探索完成后直接按默认规则保存：
+
+```bash
+roslaunch ros_fyoyi autonomous_mapping.launch prompt_on_complete:=false
+```
+
+如果想手动保存，可以关闭自动保存：
+
+```bash
+roslaunch ros_fyoyi autonomous_mapping.launch auto_save_map:=false
+```
+
+然后在探索完成后运行：
+
+```bash
+mkdir -p ~/catkin_ws/src/ros_fyoyi/maps/new_map
+rosrun map_server map_saver -f ~/catkin_ws/src/ros_fyoyi/maps/new_map/map
+```
+
+之后可以用保存下来的地图进入原来的航点导航：
+
+```bash
+roslaunch ros_fyoyi waypoint_nav.launch map_file:=/home/fyoyi/catkin_ws/src/ros_fyoyi/maps/new_map/map.yaml
+```
+
+探索逻辑已经拆成 C++ 接口，接口文件是：
+
+```text
+include/ros_fyoyi/exploration_strategy.hpp
+```
+
+当前默认实现写在：
+
+```text
+src/autonomous_explorer.cpp
+```
+
+以后要替换探索算法，可以新增一个实现 `ExplorationStrategy` 的类，然后在 `createStrategy()` 里增加一个策略名。运行时用 `exploration_strategy:=策略名` 选择：
+
+```bash
+roslaunch ros_fyoyi autonomous_mapping.launch exploration_strategy:=safe_frontier
+```
+
+如果你安装了 `explore_lite` 并想使用它替代本包的 C++ 探索节点：
+
+```bash
+roslaunch ros_fyoyi autonomous_mapping.launch use_autonomous_explorer:=false use_explore_lite:=true
 ```
 
 可以用下面命令查看最终加载的参数：
