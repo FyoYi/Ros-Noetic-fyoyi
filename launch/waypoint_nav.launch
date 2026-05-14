@@ -25,6 +25,8 @@
       示例：
         roslaunch ros_fyoyi waypoint_nav.launch map_file:=/home/user/maps/lab.yaml
     -->
+    <!--<arg name="map_file" default="$(find ros_fyoyi)/maps/home/map.yaml"/>-->
+
     <arg name="map_file" default="$(find ros_fyoyi)/maps/home/map.yaml"/>
     <arg name="rviz_config" default="$(find ros_fyoyi)/rviz/Local_plan.rviz"/>
     <arg name="waypoints_file" default="$(find ros_fyoyi)/config/waypoints.yaml"/>

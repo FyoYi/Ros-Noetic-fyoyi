@@ -1,3 +1,11 @@
+/*
+ * 自动建图保存节点。
+ *
+ * 监听自主探索节点发布的状态和 /map 地图。当探索完成、连续卡住或用户手动
+ * 请求保存时，本节点会先暂停机器人和探索器，然后在终端中用中文提示用户选择
+ * 保存地图或继续建图。保存时会创建目标目录，并调用 map_server 的 map_saver
+ * 将当前地图保存为 map.pgm 和 map.yaml。
+ */
 #include <algorithm>
 #include <cctype>
 #include <cstdlib>

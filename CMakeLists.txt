@@ -15,6 +15,7 @@ find_package(catkin REQUIRED COMPONENTS
   nav_msgs
   roscpp
   roslib
+  sensor_msgs
   std_msgs
   std_srvs
   tf
@@ -114,7 +115,7 @@ find_package(yaml-cpp REQUIRED)
 catkin_package(
   INCLUDE_DIRS include
 #  LIBRARIES ros_fyoyi
-  CATKIN_DEPENDS actionlib geometry_msgs interactive_markers move_base_msgs nav_msgs roscpp roslib std_msgs std_srvs tf visualization_msgs
+  CATKIN_DEPENDS actionlib geometry_msgs interactive_markers move_base_msgs nav_msgs roscpp roslib sensor_msgs std_msgs std_srvs tf visualization_msgs
 #  DEPENDS system_lib
 )
 
@@ -192,6 +193,14 @@ target_link_libraries(auto_map_saver
   ${catkin_LIBRARIES}
 )
 
+add_executable(disassembled_lidar_node
+  src/disassembled_lidar_node.cpp
+)
+add_dependencies(disassembled_lidar_node ${${PROJECT_NAME}_EXPORTED_TARGETS} ${catkin_EXPORTED_TARGETS})
+target_link_libraries(disassembled_lidar_node
+  ${catkin_LIBRARIES}
+)
+
 #############
 ## Install ##
 #############
@@ -205,7 +214,7 @@ target_link_libraries(auto_map_saver
 #   scripts/my_python_script
 #   DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
 # )
-install(TARGETS waypoint_server waypoint_cli autonomous_explorer auto_map_saver
+install(TARGETS waypoint_server waypoint_cli autonomous_explorer auto_map_saver disassembled_lidar_node
   RUNTIME DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
 )
 

@@ -1,7 +1,16 @@
+/*
+ * 航点命令行工具。
+ *
+ * 这个节点是 waypoint_server 的终端客户端，用于从命令行发送航点管理和
+ * 导航命令，例如 list、save、reload、nav、patrol、cancel、pause、
+ * resume、delete、rename、status 等。它本身不保存航点，也不直接控制
+ * move_base，而是通过 ros_fyoyi 的 topic/service 接口调用 waypoint_server。
+ */
 #include <ros/ros.h>
 #include <std_msgs/String.h>
 #include <std_srvs/Trigger.h>
 
+#include <algorithm>
 #include <iostream>
 #include <regex>
 #include <set>
@@ -14,69 +23,93 @@ namespace
 
 void printUsage()
 {
-  std::cout << R"(ros_fyoyi 航点工具
 
-用法:
-  rosrun ros_fyoyi waypoint_cli help
-      显示本帮助信息。
+  std::cout << R"(
 
-  rosrun ros_fyoyi waypoint_cli list
-      查看当前保存的所有航点，包含 x、y、yaw 角度和坐标系。
+███████╗██╗   ██╗ ██████╗ ██╗   ██╗██╗
+██╔════╝╚██╗ ██╔╝██╔═══██╗╚██╗ ██╔╝██║
+█████╗   ╚████╔╝ ██║   ██║ ╚████╔╝ ██║
+██╔══╝    ╚██╔╝  ██║   ██║  ╚██╔╝  ██║
+██║        ██║   ╚██████╔╝   ██║   ██║
+╚═╝        ╚═╝    ╚═════╝    ╚═╝   ╚═╝
 
-  rosrun ros_fyoyi waypoint_cli save
-      手动保存航点到 yaml 文件。默认已自动保存，这条命令用于确认写入。
-
-  rosrun ros_fyoyi waypoint_cli reload
-      从 yaml 文件重新加载航点。手动修改 waypoints.yaml 后使用。
-
-  rosrun ros_fyoyi waypoint_cli clear
-      清空当前航点列表，并按当前配置自动保存。这个操作会删除已加载航点。
-
-  rosrun ros_fyoyi waypoint_cli nav <waypoint_name>
-      导航到指定航点。发送前会检查航点是否存在。
-
-  rosrun ros_fyoyi waypoint_cli patrol <waypoint_1> <waypoint_2> ...
-      队列导航，按顺序依次前往多个航点。
-
-  rosrun ros_fyoyi waypoint_cli patrol --loop <waypoint_1> <waypoint_2> ...
-      循环巡逻，按顺序到达最后一个航点后，再从第一个航点重新开始。
-
-  rosrun ros_fyoyi waypoint_cli cancel
-      取消当前导航、队列导航或循环巡逻。
-
-  rosrun ros_fyoyi waypoint_cli pause
-      暂停当前巡逻任务。暂停时会取消当前 move_base 目标。
-
-  rosrun ros_fyoyi waypoint_cli resume
-      继续暂停中的巡逻任务。继续后会从当前航点重新发送导航目标。
-
-  rosrun ros_fyoyi waypoint_cli status
-      查看当前状态，例如空闲、单点导航、队列导航、循环巡逻、暂停。
-
-  rosrun ros_fyoyi waypoint_cli watch [刷新秒数]
-      实时查看状态和导航结果日志。默认每 1 秒刷新一次，按 Ctrl+C 退出。
-
-  rosrun ros_fyoyi waypoint_cli delete <waypoint_name>
-      删除指定航点。发送前会检查航点是否存在。
-
-  rosrun ros_fyoyi waypoint_cli rename <old_name> <new_name>
-      重命名航点。旧名字必须存在，新名字不能重复。
-
-  rosrun ros_fyoyi waypoint_cli name <next_waypoint_name>
-      设置下一个通过 RViz 添加的航点名字。只对下一次添加生效。
-
-示例:
-  rosrun ros_fyoyi waypoint_cli list
-  rosrun ros_fyoyi waypoint_cli name room
-  rosrun ros_fyoyi waypoint_cli nav room
-  rosrun ros_fyoyi waypoint_cli patrol room ketin fangjian
-  rosrun ros_fyoyi waypoint_cli patrol --loop room ketin fangjian
-  rosrun ros_fyoyi waypoint_cli watch
-  rosrun ros_fyoyi waypoint_cli cancel
-  rosrun ros_fyoyi waypoint_cli rename wp_1 door
-  rosrun ros_fyoyi waypoint_cli delete door
-  rosrun ros_fyoyi waypoint_cli save
 )";
+
+  // 标题
+  std::cout << "\033[1;96m"
+            << "ros_fyoyi 航点工具\n"
+            << "\033[0m\n";
+
+  // 用法标题
+  std::cout << "\033[1;93m"
+            << "用法:\n"
+            << "\033[0m";
+
+  std::cout << "\033[97m  rosrun ros_fyoyi waypoint_cli := ~\033[0m\n\n";
+
+  // 指令
+  std::cout << "\033[1;92m";
+
+  std::cout << "  ~ help";
+  std::cout << "\033[97m    显示帮助信息\033[0m\n";
+
+  std::cout << "\033[1;92m";
+  std::cout << "  ~ watch";
+  std::cout << "\033[97m   实时监控小车状态\033[0m\n";
+
+  std::cout << "\033[1;92m";
+  std::cout << "  ~ status";
+  std::cout << "\033[97m  查看当前状态\033[0m\n";
+
+  std::cout << "\033[1;92m";
+  std::cout << "  ~ list";
+  std::cout << "\033[97m    显示所有航点\033[0m\n\n";
+
+  std::cout << "\033[1;92m";
+  std::cout << "  ~ nav <waypoint>";
+  std::cout << "\033[97m    导航到指定航点\033[0m\n";
+
+  std::cout << "\033[1;92m";
+  std::cout << "  ~ patrol (-l (-n <loop_num>)) <waypoint_1> ...";
+  std::cout << "\033[97m  巡逻多个航点\033[0m\n\n";
+
+  std::cout << "\033[1;92m";
+  std::cout << "  ~ pause";
+  std::cout << "\033[97m   暂停当前任务\033[0m\n";
+  
+  std::cout << "\033[1;92m";
+  std::cout << "  ~ resume";
+  std::cout << "\033[97m  恢复当前任务\033[0m\n";
+
+  std::cout << "\033[1;92m";
+  std::cout << "  ~ stop";
+  std::cout << "\033[97m    停止当前任务\033[0m\n\n";
+
+  std::cout << "\033[1;92m";
+  std::cout << "  ~ set (-n <next_waypoint_name>)";
+  std::cout << "\033[97m    设置当前位置为航点\033[0m\n";
+
+  std::cout << "\033[1;92m";
+  std::cout << "  ~ rename <old_name> <new_name>";
+  std::cout << "\033[97m     重命名航点\033[0m\n";
+
+  std::cout << "\033[1;92m";
+  std::cout << "  ~ delete <waypoint_name>";
+  std::cout << "\033[97m           删除指定航点\033[0m\n";
+
+  std::cout << "\033[1;92m";
+  std::cout << "  ~ clear";
+  std::cout << "\033[97m   清空所有航点\033[0m\n\n";
+
+  std::cout << "\033[1;92m";
+  std::cout << "  ~ save";
+  std::cout << "\033[97m    保存航点到文件\033[0m\n";
+
+  std::cout << "\033[1;92m";
+  std::cout << "  ~ reload";
+  std::cout << "\033[97m  重新加载航点文件\033[0m\n";
+
+  std::cout << "\033[0m" << std::endl;
 }
 
 bool callTriggerRaw(const std::string& service_name, std_srvs::Trigger::Response& response)
@@ -105,9 +138,18 @@ bool callTrigger(const std::string& service_name)
   {
     return false;
   }
-
   std::cout << response.message << std::endl;
   return response.success;
+}
+
+void display_banner2()
+{
+    std::cout << "███████╗██╗   ██╗ ██████╗ ██╗   ██╗██╗" << std::endl;
+    std::cout << "██╔════╝╚██╗ ██╔╝██╔═══██╗╚██╗ ██╔╝██║" << std::endl;
+    std::cout << "█████╗   ╚████╔╝ ██║   ██║ ╚████╔╝ ██║" << std::endl;
+    std::cout << "██╔══╝    ╚██╔╝  ██║   ██║  ╚██╔╝  ██║" << std::endl;
+    std::cout << "██║        ██║   ╚██████╔╝   ██║   ██║" << std::endl;
+    std::cout << "╚═╝        ╚═╝    ╚═════╝    ╚═╝   ╚═╝" << std::endl;
 }
 
 bool isValidName(const std::string& name)
@@ -260,7 +302,240 @@ bool parsePositiveDouble(const std::string& text, double& value)
   return !input.fail() && input.eof() && value > 0.0;
 }
 
-int watchStatus(ros::NodeHandle& nh, double period_seconds)
+bool parsePositiveInt(const std::string& text, int& value)
+{
+  std::istringstream input(text);
+  input >> value;
+  return !input.fail() && input.eof() && value > 0;
+}
+
+std::vector<std::string> splitByDelimiter(const std::string& text, const std::string& delimiter)
+{
+  std::vector<std::string> parts;
+  std::size_t start = 0;
+  while (start <= text.size())
+  {
+    const std::size_t found = text.find(delimiter, start);
+    if (found == std::string::npos)
+    {
+      parts.push_back(text.substr(start));
+      break;
+    }
+    parts.push_back(text.substr(start, found - start));
+    start = found + delimiter.size();
+  }
+  return parts;
+}
+
+std::string trimText(const std::string& text)
+{
+  const std::size_t begin = text.find_first_not_of(" \t\r\n");
+  if (begin == std::string::npos)
+  {
+    return "";
+  }
+  const std::size_t end = text.find_last_not_of(" \t\r\n");
+  return text.substr(begin, end - begin + 1);
+}
+
+// std::string compactPatrolQueueText(const std::string& queue_text)
+// {
+//   std::vector<std::string> items = splitByDelimiter(queue_text, "->");
+//   std::size_t current_index = 0;
+//   bool found_current = false;
+
+//   for (std::size_t i = 0; i < items.size(); ++i)
+//   {
+//     std::string item = trimText(items[i]);
+//     if (item.size() >= 2 && item.front() == '[' && item.back() == ']')
+//     {
+//       item = item.substr(1, item.size() - 2);
+//       current_index = i;
+//       found_current = true;
+//     }
+//     items[i] = trimText(item);
+//   }
+
+//   if (items.empty() || !found_current)
+//   {
+//     return queue_text;
+//   }
+
+//   const std::size_t first_visible = current_index > 2 ? current_index - 2 : 0;
+//   const std::size_t last_visible = std::min(current_index + 2, items.size() - 1);
+
+//   std::ostringstream output;
+//   bool has_output = false;
+//   const int hidden_before = static_cast<int>(first_visible);
+//   if (hidden_before > 0)
+//   {
+//     output << "[" << hidden_before << "waypoint]";
+//     has_output = true;
+//   }
+
+//   for (std::size_t i = first_visible; i <= last_visible; ++i)
+//   {
+//     if (i == current_index)
+//     {
+//       output << (has_output ? " " : "") << "->[" << items[i] << "]";
+//     }
+//     else
+//     {
+//       if (has_output)
+//       {
+//         output << " -> ";
+//       }
+//       output << items[i];
+//     }
+//     has_output = true;
+//   }
+
+//   return output.str();
+// }
+
+std::string compactPatrolQueueText(const std::string& queue_text)
+{
+    std::vector<std::string> items =
+        splitByDelimiter(queue_text, "->");
+
+    std::size_t current_index = 0;
+    bool found_current = false;
+
+    // =========================
+    // 找当前目标点 [xxx]
+    // =========================
+    for (std::size_t i = 0; i < items.size(); ++i)
+    {
+        std::string item = trimText(items[i]);
+
+        if (item.size() >= 2 &&
+            item.front() == '[' &&
+            item.back() == ']')
+        {
+            item = item.substr(1, item.size() - 2);
+
+            current_index = i;
+            found_current = true;
+        }
+
+        items[i] = trimText(item);
+    }
+
+    if (items.empty() || !found_current)
+    {
+        return queue_text;
+    }
+
+    // =========================
+    // 红色箭头所在边
+    // =========================
+    int arrow_left = static_cast<int>(current_index) - 1;
+
+    // 左边最多显示2个
+    int visible_left =
+        std::max(0, arrow_left - 1);
+
+    // 右边最多显示2个
+    int visible_right =
+        std::min(
+            static_cast<int>(items.size()) - 1,
+            static_cast<int>(current_index) + 1);
+
+    std::ostringstream output;
+
+    // =========================
+    // 左侧压缩
+    // =========================
+    if (visible_left > 0)
+    {
+        output << "["
+               << items.front()
+               << "->{"
+               << (visible_left - 1)
+               << "}]->";
+    }
+
+    // =========================
+    // 开始输出
+    // =========================
+    for (int i = visible_left;
+         i <= visible_right;
+         ++i)
+    {
+        // 起始情况
+        if (i == 0 && current_index == 0)
+        {
+            output << "\033[1;92m->\033[0m"
+                   << items[i];
+        }
+        else
+        {
+            output << items[i];
+        }
+
+        // 后面还有
+        if (i < visible_right)
+        {
+            // 当前运动边
+            if (i == arrow_left)
+            {
+                output << "\033[1;92m->\033[0m";
+            }
+            else
+            {
+                output << "->";
+            }
+        }
+    }
+
+    // =========================
+    // 右侧压缩
+    // =========================
+    int hidden_right =
+        static_cast<int>(items.size()) - visible_right - 1;
+
+    if (hidden_right > 0)
+    {
+        output << "->[{"
+               << (hidden_right - 1)
+               << "}->"
+               << items.back()
+               << "]";
+    }
+
+    return output.str();
+}
+
+std::string formatStatusForWatch(const std::string& status_text)
+{
+  std::istringstream input(status_text);
+  std::ostringstream output;
+  std::string line;
+  bool first_line = true;
+  const std::string prefix = "巡逻队列：";
+
+  while (std::getline(input, line))
+  {
+    if (!first_line)
+    {
+      output << "\n";
+    }
+    first_line = false;
+
+    if (line.find(prefix) == 0)
+    {
+      output << prefix << compactPatrolQueueText(line.substr(prefix.size()));
+    }
+    else
+    {
+      output << line;
+    }
+  }
+
+  return output.str();
+}
+
+int watchStatus(ros::NodeHandle& nh)
 {
   if (!ros::service::waitForService("/fyoyi/status", ros::Duration(5.0)))
   {
@@ -270,7 +545,10 @@ int watchStatus(ros::NodeHandle& nh, double period_seconds)
 
   ros::ServiceClient status_client = nh.serviceClient<std_srvs::Trigger>("/fyoyi/status");
   ros::Subscriber result_sub = nh.subscribe("/fyoyi/navi_result", 20, navResultCallback);
-  ros::WallRate rate(1.0 / period_seconds);
+  ros::WallRate rate(1.0);
+
+  std::string last_status;
+  int no_change_count = 0;
 
   std::cout << "开始实时查看小车状态，按 Ctrl+C 退出。" << std::endl;
   while (ros::ok())
@@ -278,8 +556,26 @@ int watchStatus(ros::NodeHandle& nh, double period_seconds)
     std_srvs::Trigger srv;
     if (status_client.call(srv) && srv.response.success)
     {
-      std::cout << "\n========== 小车状态 ==========\n" << srv.response.message
-                << "\n==============================" << std::endl;
+      std::string current_status = formatStatusForWatch(srv.response.message);
+      bool changed = (current_status != last_status);
+      bool timeout_refresh = (no_change_count >= 10);
+
+      if (changed || timeout_refresh)
+      {
+        std::cout << "\033[2J\033[1;1H" << std::endl;
+        display_banner2();
+        std::cout << "\n=============== 小车状态 ===============\n" 
+                  << current_status
+                  << "\n========================================" << std::endl;
+
+        last_status = current_status;
+
+        no_change_count = 0;
+      }
+      else
+      {
+        no_change_count++;
+      }
     }
     else
     {
@@ -312,41 +608,35 @@ int main(int argc, char** argv)
   ros::NodeHandle nh;
 
   const std::string& command = args[0];
-  if (command == "list" && args.size() == 1)
-  {
+  if (command == "list" && args.size() == 1){
     return callTrigger("/fyoyi/list_waypoints") ? 0 : 1;
   }
-  if (command == "save" && args.size() == 1)
-  {
+
+  if (command == "save" && args.size() == 1){
     return callTrigger("/fyoyi/save_waypoints") ? 0 : 1;
   }
-  if (command == "reload" && args.size() == 1)
-  {
+
+  if (command == "reload" && args.size() == 1){
     return callTrigger("/fyoyi/reload_waypoints") ? 0 : 1;
   }
-  if (command == "clear" && args.size() == 1)
-  {
+
+  if (command == "clear" && args.size() == 1){
     return callTrigger("/fyoyi/clear_waypoints") ? 0 : 1;
   }
-  if (command == "status" && args.size() == 1)
-  {
+
+  if (command == "status" && args.size() == 1){
     return callTrigger("/fyoyi/status") ? 0 : 1;
   }
-  if (command == "watch" && args.size() <= 2)
-  {
-    double period_seconds = 1.0;
-    if (args.size() == 2 && !parsePositiveDouble(args[1], period_seconds))
-    {
-      std::cerr << "错误：刷新秒数必须是大于 0 的数字。" << std::endl;
-      return 2;
-    }
-    return watchStatus(nh, period_seconds);
+
+  if (command == "watch" && args.size() == 1){
+    return watchStatus(nh);
   }
-  if (command == "nav" && args.size() == 2)
-  {
+  
+  if (command == "nav" && args.size() == 2){
+
     std::set<std::string> names;
-    if (!validateNameSyntax(args[1]) || !getWaypointNames(names) ||
-        !requireWaypointExists(names, args[1], "导航"))
+
+    if (!validateNameSyntax(args[1]) || !getWaypointNames(names) || !requireWaypointExists(names, args[1], "导航"))
     {
       return 1;
     }
@@ -357,14 +647,44 @@ int main(int argc, char** argv)
     std::cout << "已发送导航航点：" << args[1] << std::endl;
     return 0;
   }
+/* ***************************************************************************************** */
   if (command == "patrol" && args.size() >= 2)
   {
     bool loop = false;
+    int loop_num = 0;
     std::size_t first_name_index = 1;
-    if (args[1] == "--loop")
+    if (args[1] == "-l")
     {
       loop = true;
       first_name_index = 2;
+      if (args.size() >= 4 && args[2] == "-n")
+      {
+        if (!parsePositiveInt(args[3], loop_num))
+        {
+          std::cerr << "错误：-n 后面的循环次数必须是大于 0 的整数。" << std::endl;
+          return 2;
+        }
+        std::cout << loop_num << std::endl;
+
+        /*------------------------------------------------*/
+        first_name_index = 4;
+        /*------------------------------------------------*/
+      }
+      else if (args.size() >= 3 && args[2] == "-n")
+      {
+        std::cerr << "错误：-n 后面必须跟循环次数。" << std::endl;
+        return 2;
+      }
+    }
+    else if (args[1] == "-n")
+    {
+      std::cerr << "错误：-n 必须配合 -l 使用，格式：patrol -l -n <loop_num> <waypoint_1> ..." << std::endl;
+      return 2;
+    }
+    else if (!args[1].empty() && args[1][0] == '-')
+    {
+      std::cerr << "错误：patrol 只支持格式：patrol (-l (-n <loop_num>)) <waypoint_1> ..." << std::endl;
+      return 2;
     }
     if (first_name_index >= args.size())
     {
@@ -379,6 +699,11 @@ int main(int argc, char** argv)
     }
     for (std::size_t i = first_name_index; i < args.size(); ++i)
     {
+      if (!args[i].empty() && args[i][0] == '-')
+      {
+        std::cerr << "错误：patrol 只支持格式：patrol (-l (-n <loop_num>)) <waypoint_1> ..." << std::endl;
+        return 2;
+      }
       if (!validateNameSyntax(args[i]) || !requireWaypointExists(names, args[i], "加入巡逻队列"))
       {
         return 1;
@@ -386,19 +711,32 @@ int main(int argc, char** argv)
     }
 
     std::string command_text = joinWords(args, first_name_index);
-    if (loop)
-    {
+    if (loop){
       command_text = "--loop " + command_text;
+      if (loop_num > 0)
+      {
+        command_text = "--loop --loop-count= " + std::to_string(loop_num) + " " + joinWords(args, first_name_index);
+      }
     }
     if (!publishOnce(nh, "/fyoyi/patrol_waypoints", command_text))
     {
       return 1;
     }
-    std::cout << (loop ? "已发送循环巡逻队列：" : "已发送导航队列：") << joinWords(args, first_name_index)
-              << std::endl;
+    if (loop && loop_num > 0)
+    {
+      std::cout << "已发送循环巡逻队列：" << joinWords(args, first_name_index) << "，循环次数：" << loop_num << std::endl;
+    }
+    else
+    {
+      std::cout << (loop ? "已发送循环巡逻队列：" : "已发送导航队列：") << joinWords(args, first_name_index)
+                << std::endl;
+    }
     return 0;
   }
-  if (command == "cancel" && args.size() == 1)
+
+/* ***************************************************************************************** */
+
+  if (command == "stop" && args.size() == 1)
   {
     if (!publishOnce(nh, "/fyoyi/cancel_navigation", "cancel"))
     {
@@ -407,6 +745,7 @@ int main(int argc, char** argv)
     std::cout << "已发送取消导航命令。" << std::endl;
     return 0;
   }
+
   if (command == "pause" && args.size() == 1)
   {
     if (!publishOnce(nh, "/fyoyi/pause_patrol", "pause"))
@@ -416,6 +755,7 @@ int main(int argc, char** argv)
     std::cout << "已发送暂停巡逻命令。" << std::endl;
     return 0;
   }
+
   if (command == "resume" && args.size() == 1)
   {
     if (!publishOnce(nh, "/fyoyi/resume_patrol", "resume"))
@@ -425,21 +765,25 @@ int main(int argc, char** argv)
     std::cout << "已发送继续巡逻命令。" << std::endl;
     return 0;
   }
-  if (command == "delete" && args.size() == 2)
+
+  if (command == "delete" && args.size() >= 2)
   {
     std::set<std::string> names;
-    if (!validateNameSyntax(args[1]) || !getWaypointNames(names) ||
-        !requireWaypointExists(names, args[1], "删除"))
-    {
-      return 1;
-    }
-    if (!publishOnce(nh, "/fyoyi/delete_waypoint", args[1]))
-    {
-      return 1;
-    }
-    std::cout << "已发送删除航点：" << args[1] << std::endl;
+    for(std::size_t i = 0; i < args.size()-1; i++){
+      if (!validateNameSyntax(args[i+1]) || !getWaypointNames(names) ||
+            !requireWaypointExists(names, args[i+1], "删除"))
+      {
+        return 1;
+      }
+      if (!publishOnce(nh, "/fyoyi/delete_waypoint", args[i+1]))
+      {
+        return 1;
+      }
+    std::cout << "已发送删除航点：" << args[i+1] << std::endl;
+  }
     return 0;
   }
+
   if (command == "rename" && args.size() == 3)
   {
     std::set<std::string> names;
@@ -456,20 +800,37 @@ int main(int argc, char** argv)
     std::cout << "已发送重命名航点：" << args[1] << " -> " << args[2] << std::endl;
     return 0;
   }
-  if ((command == "name" || command == "next-name") && args.size() == 2)
+  
+  if (command == "set")
   {
-    std::set<std::string> names;
-    if (!validateNameSyntax(args[1]) || !getWaypointNames(names) ||
-        !requireWaypointMissing(names, args[1], "设置为下一个航点名"))
+    if (args.size() == 1)
     {
-      return 1;
+      if (!publishOnce(nh, "/fyoyi/next_waypoint_name", ""))
+      {
+        return 1;
+      }
+      std::cout << "下一个通过 RViz 添加的航点将使用默认名字。" << std::endl;
+      return 0;
     }
-    if (!publishOnce(nh, "/fyoyi/next_waypoint_name", args[1]))
+
+    if (args.size() == 3 && args[1] == "-n")
     {
-      return 1;
+      std::set<std::string> names;
+      if (!validateNameSyntax(args[2]) || !getWaypointNames(names) ||
+          !requireWaypointMissing(names, args[2], "设置为下一个航点名"))
+      {
+        return 1;
+      }
+      if (!publishOnce(nh, "/fyoyi/next_waypoint_name", args[2]))
+      {
+        return 1;
+      }
+      std::cout << "下一个通过 RViz 添加的航点将命名为：" << args[2] << std::endl;
+      return 0;
     }
-    std::cout << "下一个通过 RViz 添加的航点将命名为：" << args[1] << std::endl;
-    return 0;
+
+    std::cerr << "错误：set 命令格式应为：set 或 set -n <航点名>。" << std::endl;
+    return 2;
   }
 
   std::cerr << "错误：命令格式不正确。" << std::endl;

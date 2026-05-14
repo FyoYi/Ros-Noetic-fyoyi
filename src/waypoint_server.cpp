@@ -525,11 +525,25 @@ private:
   void patrolWaypointsCallback(const std_msgs::String::ConstPtr& msg)
   {
     std::vector<std::string> words = splitWords(msg->data);
+
+    std::cout << "waypoint_server.cpp 529" << std::endl;
+    for(auto s : words)
+      std::cout << s << " ";
+    std::cout << std::endl;
+
+
     bool loop = false;
+    std::size_t loop_count = 0;
     if (!words.empty() && words.front() == "--loop")
     {
       loop = true;
       words.erase(words.begin());
+      if (!words.empty() && words.front() == "--loop-count="){
+        words.erase(words.begin());
+        loop_count = std::stoul(words.front());
+        loop_num_ = loop_count;
+        words.erase(words.begin());
+      }
     }
 
     if (words.empty())
@@ -551,7 +565,7 @@ private:
     }
 
     const uint64_t task_id = startTask(loop ? "循环巡逻" : "队列导航", words.front(), words, loop);
-    std::thread(&WaypointServer::patrolThread, this, words, loop, task_id).detach();
+    std::thread(&WaypointServer::patrolThread, this, words, loop, loop_count, task_id).detach();
   }
 
   void cancelNavigationCallback(const std_msgs::String::ConstPtr&)
@@ -641,13 +655,15 @@ private:
     }
   }
 
-  void patrolThread(const std::vector<std::string>& names, bool loop, uint64_t task_id)
+  void patrolThread(const std::vector<std::string>& names, 
+                    bool loop, 
+                    std::size_t loop_count, 
+                    uint64_t task_id)
   {
     std::size_t index = 0;
-    do
-    {
-      for (; index < names.size(); ++index)
-      {
+    std::size_t current_loop = 0;
+    do{
+      for (; index < names.size(); ++index){
         if (isTaskStopped(task_id))
         {
           return;
@@ -674,12 +690,21 @@ private:
             patrol_queue_.clear();
             patrol_index_ = 0;
             patrol_loop_ = false;
+            // loop_now_num_ = 0;
+            // loop_num_ = 0;
           }
           return;
         }
       }
       index = 0;
-    } while (loop && ros::ok() && !isTaskStopped(task_id));
+      current_loop++;
+      loop_now_num_ = current_loop;
+
+    } while (loop && 
+             ros::ok() && 
+             !isTaskStopped(task_id) &&
+             (loop_count == 0 || current_loop < loop_count)
+            );
 
     std::lock_guard<std::mutex> guard(task_mutex_);
     if (task_id == task_generation_)
@@ -689,6 +714,8 @@ private:
       patrol_queue_.clear();
       patrol_index_ = 0;
       patrol_loop_ = false;
+      loop_now_num_ = 0;
+      loop_num_ = 0;
       last_result_ = loop ? "循环巡逻已结束" : "队列导航已完成";
       publishResult(last_result_);
     }
@@ -840,6 +867,9 @@ private:
         }
       }
       output << "\n循环巡逻：" << (patrol_loop_ ? "是" : "否");
+      if(patrol_loop_){
+        output << "\n当前循环：" << loop_now_num_ << " / " << loop_num_;
+      }
     }
     output << "\n上次结果：" << (last_result_.empty() ? "无" : last_result_);
     return output.str();
@@ -964,19 +994,21 @@ private:
   std::string buildWaypointListText()
   {
     std::lock_guard<std::recursive_mutex> guard(mutex_);
-    if (waypoints_.empty())
-    {
+
+    if (waypoints_.empty()){
       return "当前没有航点";
     }
 
     std::ostringstream output;
-    for (std::size_t index = 0; index < waypoints_.size(); ++index)
-    {
+
+    for (std::size_t index = 0; index < waypoints_.size(); ++index){
+
       const Waypoint& waypoint = waypoints_[index];
+      
       output << waypoint.name << ": x=" << fixed3(waypoint.pose.position.x) << ", y=" << fixed3(waypoint.pose.position.y)
              << ", yaw=" << fixed1(quaternionToYawDeg(waypoint.pose.orientation)) << " deg, frame=" << waypoint.frame_id;
-      if (index + 1 < waypoints_.size())
-      {
+
+      if (index + 1 < waypoints_.size()){
         output << "\n";
       }
     }
@@ -1038,6 +1070,8 @@ private:
   std::vector<std::string> patrol_queue_;
   std::size_t patrol_index_ = 0;
   bool patrol_loop_ = false;
+  std::size_t loop_num_;
+  std::size_t loop_now_num_;
   std::string last_result_ = "无";
 
   std::string map_frame_;

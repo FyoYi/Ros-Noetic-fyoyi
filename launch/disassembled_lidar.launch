@@ -1,0 +1,39 @@
+<launch>
+    <arg name="port" default="/dev/ttyUSB0"/>
+    <arg name="baud" default="230400"/>
+    <arg name="frame_id" default="laser"/>
+    <arg name="scan_topic" default="/scan"/>
+    <arg name="range_min" default="0.05"/>
+    <arg name="range_max" default="8.0"/>
+    <arg name="scan_bins" default="720"/>
+    <arg name="inverted" default="false"/>
+    <arg name="angle_offset" default="0.0"/>
+    <arg name="sample_offset" default="8"/>
+    <arg name="sample_stride" default="3"/>
+    <arg name="packet_size" default="60"/>
+
+    <!--
+      默认包头按常见 YDLIDAR 风格在串口中出现为 55 AA。
+      如果 rostopic echo /scan 没数据，但串口确实在收包，尝试：
+        sync0:=170 sync1:=85
+    -->
+    <arg name="sync0" default="85"/>
+    <arg name="sync1" default="170"/>
+
+    <node pkg="ros_fyoyi" type="disassembled_lidar_node" name="disassembled_lidar_node" output="screen">
+        <param name="port" value="$(arg port)"/>
+        <param name="baud" value="$(arg baud)"/>
+        <param name="frame_id" value="$(arg frame_id)"/>
+        <param name="scan_topic" value="$(arg scan_topic)"/>
+        <param name="range_min" value="$(arg range_min)"/>
+        <param name="range_max" value="$(arg range_max)"/>
+        <param name="scan_bins" value="$(arg scan_bins)"/>
+        <param name="inverted" value="$(arg inverted)"/>
+        <param name="angle_offset" value="$(arg angle_offset)"/>
+        <param name="sample_offset" value="$(arg sample_offset)"/>
+        <param name="sample_stride" value="$(arg sample_stride)"/>
+        <param name="packet_size" value="$(arg packet_size)"/>
+        <param name="sync0" value="$(arg sync0)"/>
+        <param name="sync1" value="$(arg sync1)"/>
+    </node>
+</launch>

@@ -1,3 +1,15 @@
+/*
+ * 自主探索节点。
+ *
+ * 订阅 SLAM 生成的 /map，在已知空地和未知区域之间寻找 frontier，
+ * 根据策略接口选择可导航目标，并通过 move_base action 自动发送探索目标。
+ * 当前默认策略参考 frontier_exploration 的思路：预处理栅格地图、提取
+ * frontier 区域、按区域大小和距离评分，再用 /move_base/make_plan 过滤
+ * 不可达目标。
+ *
+ * 节点还负责处理暂停、继续、手动脱困、目标失败黑名单、连续卡住后的用户确认
+ * 状态发布等自动建图探索流程。
+ */
 #include <algorithm>
 #include <cmath>
 #include <limits>
@@ -458,7 +470,16 @@ std::unique_ptr<ExplorationStrategy> createStrategy(const std::string& strategy_
   ROS_WARN("Explorer: unknown strategy '%s'; fallback to safe_frontier", strategy_name.c_str());
   return std::unique_ptr<ExplorationStrategy>(new SafeFrontierStrategy(nh));
 }
+//---------------------------------------------------------------
 
+
+
+
+
+
+
+
+//-------------------------------------------------------------------
 class AutonomousExplorer
 {
 public:
