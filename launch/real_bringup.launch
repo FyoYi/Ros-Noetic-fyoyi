@@ -1,0 +1,56 @@
+<launch>
+    <!--
+      真机硬件启动模板。
+
+      这个 launch 的职责是先把“真实环境下的消息机制”准备好，
+      然后再启动 waypoint_nav.launch。
+
+      约定目标：
+        1. 激光雷达驱动发布 /scan
+        2. 底盘或里程计驱动发布 /odom，并维持 odom -> base_frame TF
+        3. 底盘控制器订阅 /cmd_vel
+        4. 其他传感器节点也可以在这里统一启动
+
+      使用方式示例：
+        roslaunch ros_fyoyi real_bringup.launch \
+          lidar_launch:=/path/to/your_lidar.launch \
+          base_launch:=/path/to/your_base.launch \
+          extra_sensors_launch:=/path/to/your_extra_sensors.launch
+
+      默认值是 noop.launch，方便你先把框架跑起来；
+      如果不覆盖参数，这个 launch 不会启动任何厂商硬件节点。
+    -->
+
+    <arg name="lidar_launch" default="$(find ros_fyoyi)/launch/noop.launch"/>
+    <arg name="base_launch" default="$(find ros_fyoyi)/launch/noop.launch"/>
+    <arg name="extra_sensors_launch" default="$(find ros_fyoyi)/launch/noop.launch"/>
+
+    <arg name="scan_topic" default="/scan"/>
+    <arg name="odom_topic" default="odom"/>
+    <arg name="base_frame" default="base_footprint"/>
+    <arg name="odom_frame" default="odom"/>
+
+    <!--
+      真机运行时一般不使用仿真时间。
+      如果你的厂商 launch 需要 use_sim_time，也可以在这里统一改。
+    -->
+    <param name="use_sim_time" value="false"/>
+
+    <!--
+      这些 include 由你在启动时传入真实硬件对应的 launch 文件。
+      推荐至少提供雷达和底盘两个启动项。
+    -->
+    <include file="$(arg lidar_launch)"/>
+    <include file="$(arg base_launch)"/>
+    <include file="$(arg extra_sensors_launch)"/>
+
+    <!--
+      记录本次硬件层使用的关键参数，便于 waypoint_nav.launch 读取和调试。
+    -->
+    <rosparam subst_value="true" ns="ros_fyoyi">
+        scan_topic: "$(arg scan_topic)"
+        odom_topic: "$(arg odom_topic)"
+        base_frame: "$(arg base_frame)"
+        odom_frame: "$(arg odom_frame)"
+    </rosparam>
+</launch>

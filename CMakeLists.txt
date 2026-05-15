@@ -193,14 +193,6 @@ target_link_libraries(auto_map_saver
   ${catkin_LIBRARIES}
 )
 
-add_executable(disassembled_lidar_node
-  src/disassembled_lidar_node.cpp
-)
-add_dependencies(disassembled_lidar_node ${${PROJECT_NAME}_EXPORTED_TARGETS} ${catkin_EXPORTED_TARGETS})
-target_link_libraries(disassembled_lidar_node
-  ${catkin_LIBRARIES}
-)
-
 #############
 ## Install ##
 #############
@@ -214,7 +206,7 @@ target_link_libraries(disassembled_lidar_node
 #   scripts/my_python_script
 #   DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
 # )
-install(TARGETS waypoint_server waypoint_cli autonomous_explorer auto_map_saver disassembled_lidar_node
+install(TARGETS waypoint_server waypoint_cli autonomous_explorer auto_map_saver
   RUNTIME DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
 )
 

@@ -94,8 +94,8 @@ void printUsage()
   std::cout << "\033[97m     重命名航点\033[0m\n";
 
   std::cout << "\033[1;92m";
-  std::cout << "  ~ delete <waypoint_name>";
-  std::cout << "\033[97m           删除指定航点\033[0m\n";
+  std::cout << "  ~ delete <waypoint_name> ...";
+  std::cout << "\033[97m       删除指定航点\033[0m\n";
 
   std::cout << "\033[1;92m";
   std::cout << "  ~ clear";
