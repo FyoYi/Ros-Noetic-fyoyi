@@ -612,24 +612,29 @@ private:
   uint64_t startTask(const std::string& mode, const std::string& current_goal,
                      const std::vector<std::string>& queue, bool loop)
   {
+    uint64_t task_id = 0;
+    {
+      std::lock_guard<std::mutex> guard(task_mutex_);
+      ++task_generation_;
+      task_id = task_generation_;
+      cancel_requested_ = false;
+      paused_ = false;
+      task_mode_ = mode;
+      current_goal_ = current_goal;
+      patrol_queue_ = queue;
+      patrol_index_ = 0;
+      patrol_loop_ = loop;
+      last_result_ = "任务已启动";
+    }
     cancelMoveBaseGoals();
-    std::lock_guard<std::mutex> guard(task_mutex_);
-    ++task_generation_;
-    cancel_requested_ = false;
-    paused_ = false;
-    task_mode_ = mode;
-    current_goal_ = current_goal;
-    patrol_queue_ = queue;
-    patrol_index_ = 0;
-    patrol_loop_ = loop;
-    last_result_ = "任务已启动";
-    return task_generation_;
+    return task_id;
   }
 
   void requestCancel(const std::string& reason)
   {
     {
       std::lock_guard<std::mutex> guard(task_mutex_);
+      ++task_generation_;
       cancel_requested_ = true;
       paused_ = false;
       task_mode_ = "空闲";
@@ -726,8 +731,11 @@ private:
     Waypoint waypoint;
     if (!findWaypoint(name, waypoint))
     {
-      publishResult("失败:" + name + ":航点不存在");
-      ROS_WARN("waypoint not found: %s", name.c_str());
+      if (isCurrentTask(task_id))
+      {
+        publishResult("失败:" + name + ":航点不存在");
+        ROS_WARN("waypoint not found: %s", name.c_str());
+      }
       return NavOutcome::FAILED;
     }
 
@@ -736,9 +744,13 @@ private:
     ROS_INFO("waiting for move_base action server: %s", move_base_action_.c_str());
     if (!move_base_client.waitForServer(ros::Duration(10.0)))
     {
+      if (!isCurrentTask(task_id))
+      {
+        return NavOutcome::CANCELED;
+      }
       publishResult("失败:" + name + ":move_base未启动");
       ROS_ERROR("move_base action server is not ready");
-      setLastResult("失败:" + name + ":move_base未启动");
+      setLastResultIfCurrent(task_id, "失败:" + name + ":move_base未启动");
       return NavOutcome::FAILED;
     }
 
@@ -754,7 +766,7 @@ private:
       if (isTaskStopped(task_id))
       {
         move_base_client.cancelGoal();
-        setLastResult("已取消:" + name);
+        setLastResultIfCurrent(task_id, "已取消:" + name);
         return NavOutcome::CANCELED;
       }
 
@@ -765,7 +777,7 @@ private:
         if (isTaskStopped(task_id))
         {
           move_base_client.cancelGoal();
-          setLastResult("已取消:" + name);
+          setLastResultIfCurrent(task_id, "已取消:" + name);
           return NavOutcome::CANCELED;
         }
         if (allow_pause && isTaskPaused(task_id))
@@ -779,7 +791,7 @@ private:
           }
           if (isTaskStopped(task_id))
           {
-            setLastResult("已取消:" + name);
+            setLastResultIfCurrent(task_id, "已取消:" + name);
             return NavOutcome::CANCELED;
           }
           ROS_INFO("resume waypoint navigation: %s", name.c_str());
@@ -792,13 +804,17 @@ private:
       {
         continue;
       }
+      if (isTaskStopped(task_id))
+      {
+        return NavOutcome::CANCELED;
+      }
 
       const actionlib::SimpleClientGoalState state = move_base_client.getState();
       if (state == actionlib::SimpleClientGoalState::SUCCEEDED)
       {
         const std::string result = "完成:" + name;
         publishResult(result);
-        setLastResult(result);
+        setLastResultIfCurrent(task_id, result);
         ROS_INFO("arrived waypoint: %s", name.c_str());
         return NavOutcome::SUCCEEDED;
       }
@@ -806,7 +822,7 @@ private:
       std::ostringstream result;
       result << "失败:" << name << ":state=" << state.toString();
       publishResult(result.str());
-      setLastResult(result.str());
+      setLastResultIfCurrent(task_id, result.str());
       ROS_WARN("navigation failed: %s, state: %s", name.c_str(), state.toString().c_str());
       return NavOutcome::FAILED;
     }
@@ -820,6 +836,12 @@ private:
     return cancel_requested_ || task_id != task_generation_;
   }
 
+  bool isCurrentTask(uint64_t task_id)
+  {
+    std::lock_guard<std::mutex> guard(task_mutex_);
+    return !cancel_requested_ && task_id == task_generation_;
+  }
+
   bool isTaskPaused(uint64_t task_id)
   {
     std::lock_guard<std::mutex> guard(task_mutex_);
@@ -830,6 +852,15 @@ private:
   {
     std::lock_guard<std::mutex> guard(task_mutex_);
     last_result_ = result;
+  }
+
+  void setLastResultIfCurrent(uint64_t task_id, const std::string& result)
+  {
+    std::lock_guard<std::mutex> guard(task_mutex_);
+    if (!cancel_requested_ && task_id == task_generation_)
+    {
+      last_result_ = result;
+    }
   }
 
   void cancelMoveBaseGoals()
